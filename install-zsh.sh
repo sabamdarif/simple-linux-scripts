@@ -104,7 +104,7 @@ EOF
 
 print_success() {
 	clear
-	echo -e "${G}SETUP SUCCESSFULL ${W} ${C} Now Restart the Terminal {W}"
+	echo -e "${G}SETUP SUCCESSFULL ${W} ${C} Now Restart the Terminal ${W}"
 }
 
 check_prefix
