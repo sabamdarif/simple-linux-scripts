@@ -8,6 +8,6 @@ This script automates the installation of zsh, oh-my-zsh, autosuggestion, and cu
 
     apt install wget -y
 
-    wget -O- https://raw.githubusercontent.com/sabamdarif/short-linux-tools/main/install-zsh.sh
+    wget https://raw.githubusercontent.com/sabamdarif/short-linux-tools/main/install-zsh.sh
 
     bash install-zsh.sh
