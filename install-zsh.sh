@@ -56,8 +56,7 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:
 
 	sed -i -e 's/ZSH_THEME="robbyrussell"/ZSH_THEME="kalistyle"/g' ~/.zshrc
 	sed -i -e 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting)/g' ~/.zshrc
-
-
+        echo "setopt nonomatch" >> ~/.zshrc
 }
 
 setup_theme() {
@@ -99,7 +98,6 @@ ZSH_THEME_VIRTUAL_ENV_PROMPT_SUFFIX="› %{\$reset_color%}"
 ZSH_THEME_VIRTUALENV_PREFIX="\$ZSH_THEME_VIRTUAL_ENV_PROMPT_PREFIX"
 ZSH_THEME_VIRTUALENV_SUFFIX="\$ZSH_THEME_VIRTUAL_ENV_PROMPT_SUFFIX"
 EOF
-
 }
 
 print_success() {
