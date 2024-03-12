@@ -109,9 +109,9 @@ usefull_settings_and_apps() {
      sleep 1
      fi
   #set custome cursor size 
-  read -p "${Y} Do you want to change the cursor size? (y/n): "${W} choice
+  read -p "${Y} Do you want to change the cursor size? (y/n): "${W} choice_cur
 while true; do
-    if [ "$choice" = "y" ]; then
+    if [ "$choice_cur" = "y" ]; then
         current_size=$(gsettings get org.gnome.desktop.interface cursor-size)
         echo "${G} The cursor size is: $current_size"${W}
         read -p "${Y} Enter the new cursor size: "${W} new_size
@@ -122,16 +122,16 @@ while true; do
             echo "${G} Changes saved."${G}
             break
         fi
-    elif [ "$choice" = "n" ]; then
+    elif [ "$choice_cur" = "n" ]; then
         break
     else
         echo "${R} Invalid input. Please enter 'y' or 'n'."${W}
     fi
 done
 #change volume steps
-read -p "${G} Do you want to change volume steps? (y/n): "${W} choice
+read -p "${G} Do you want to change volume steps? (y/n): "${W} choice_vol
 
-if [ "$choice" = "y" ]; then
+if [ "$choice_vol" = "y" ]; then
     current_steps=$(gsettings get org.gnome.settings-daemon.plugins.media-keys volume-step)
     echo "${G} The cursor size is: $current_steps"${W}
     read -p "${Y} Enter the new steps value: "${W} new_steps_value
@@ -142,10 +142,16 @@ fi
 sudo dnf install pavucontrol -y
 sudo dnf install fedora-workstation-repositories -y
 # extrem poweer saving
-read -p "${Y} Do you want to setup extrem battery saving (for laptop)? (y/n): "${W} choice
+read -p "${Y} Do you want to setup extreme battery saving (for laptop)? (y/n): "${W} choice_extbattery
 #https://github.com/AdnanHodzic/auto-cpufreq?tab=readme-ov-file
+ if [ "$choice_extbattery" = "y" ]; then
 git clone https://github.com/AdnanHodzic/auto-cpufreq.git
 cd auto-cpufreq && sudo ./auto-cpufreq-installer
+cd 
+rm -rf auto-cpufreq
+else
+echo "${G}Canceling extreme battery saving"${W}
+fi
 }
 
 install_extensions() {
