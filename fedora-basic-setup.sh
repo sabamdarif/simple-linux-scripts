@@ -98,6 +98,8 @@ usefull_settings_and_apps() {
     flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
     sudo dnf install gnome-shell-extensions gnome-extensions-app -y
     flatpak install flathub com.mattjakeman.ExtensionManager
+    # GDM settings 
+    flatpak install flathub io.github.realmazharhussain.GdmSettings
     sudo dnf install vlc -y
      #system monitor
      read -p "${Y} Do you want to install a system monitor? (y/n): "${W} mon_choice
@@ -143,10 +145,11 @@ sudo dnf install pavucontrol -y
 sudo dnf install fedora-workstation-repositories -y
 # extrem poweer saving
 read -p "${Y} Do you want to setup extreme battery saving (for laptop)? (y/n): "${W} choice_extbattery
-#https://github.com/AdnanHodzic/auto-cpufreq?tab=readme-ov-file
+#https://github.com/AdnanHodzic/auto-cpufreq
  if [ "$choice_extbattery" = "y" ]; then
 git clone https://github.com/AdnanHodzic/auto-cpufreq.git
 cd auto-cpufreq && sudo ./auto-cpufreq-installer
+
 cd 
 rm -rf auto-cpufreq
 else
