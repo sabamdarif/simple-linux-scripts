@@ -3,6 +3,8 @@
 This script automates the installation of zsh, oh-my-zsh, autosuggestion, and customizes the terminal look like Kali terminal on any distribution and also in Termux.
 
 ## Steps
+
+- <b>Install wget and git first</b>
 ```
    wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
 ```
