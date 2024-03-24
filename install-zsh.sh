@@ -28,7 +28,7 @@ if [ -e "install.sh" ]; then
   renamed_file="install_$(date +"%Y%m%d%H%M%S").sh"
   mv "install.sh" "$renamed_file"
   sleep 1.2 
-  echo -e "{G}The existing file has been renamed to${W} ${C}$renamed_file${W}."
+  echo -e "${G}The existing file has been renamed to ${C}$renamed_file${W}."
 else
   echo -e "${Y}No file named install.sh found in the current directory.${W}"
 fi
@@ -37,12 +37,10 @@ fi
 
 zsh_setup() {
 	clear
-	apt install zsh wget curl git -y
-
 	echo "${Y}please wait ......"${W}
 	echo "${C}until you get the success massage "${W}
 	sleep 1.3
-	cd ~/
+	cd ~
 	check_file
 	#echo -e "${C} Now you automaticly login into${W} ${G} ZSH ${W} ${C}so first quit it and wait for${W} ${Y} SETUP SUCCESSFULL MASSAGE ${W}."
 	sleep 1.5
@@ -50,10 +48,9 @@ zsh_setup() {
 	sed -i -e 's/exec zsh -l/#exec zsh -l/g' install.sh
 	#sed -i -e 's/#setup_shell()/setup_shell()/g' ~/install.sh
 	bash install.sh
-git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
-
-git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
-
+	rm install.sh
+git clone https://github.com/zsh-users/zsh-autosuggestions ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions
+git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ~/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting
 	sed -i -e 's/ZSH_THEME="robbyrussell"/ZSH_THEME="kalistyle"/g' ~/.zshrc
 	sed -i -e 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting)/g' ~/.zshrc
         echo "setopt nonomatch" >> ~/.zshrc
@@ -102,7 +99,9 @@ EOF
 
 print_success() {
 	clear
+	rm install-zsh.sh
 	echo -e "${G}SETUP SUCCESSFULL ${W} ${C} Now Restart the Terminal ${W}"
+	echo -e "${C}Or Log Out And Log Back In Again${W}"
 }
 
 check_prefix
