@@ -4,7 +4,7 @@ This script automates the installation of oh-my-zsh, zsh-autosuggestion, and cus
 
 ## Steps
 
-- <b>Install wget and git first</b>
+- <b>Install zsh and git first</b>
 ```
    wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
 ```
