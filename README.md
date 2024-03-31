@@ -1,6 +1,6 @@
-# Install-Cool-Zsh
+# Install-zsh
 
-This script automates the installation of zsh, oh-my-zsh, autosuggestion, and customizes the terminal look like Kali terminal on any distribution and also in Termux.
+This script automates the installation of oh-my-zsh, zsh-autosuggestion, and customizes the terminal look like Kali terminal on any distribution and also in Termux.
 
 ## Steps
 
