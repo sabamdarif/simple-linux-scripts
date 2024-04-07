@@ -100,7 +100,7 @@ EOF
 print_success() {
 	clear
 	rm install-zsh.sh
-	echo -e "${G}SETUP SUCCESSFULL ${W} ${C} Now Restart the Terminal ${W}"
+	echo -e "${G}ZSH SETUP SUCCESSFULL ${W} ${C} Now Restart the Terminal ${W}"
 	echo -e "${C}Or Log Out And Log Back In Again${W}"
 }
 
