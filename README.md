@@ -48,8 +48,9 @@ This script automates the installation of oh-my-zsh, zsh-autosuggestion, and cus
   - User Themes by fmuellner
   - Vitals by corecoding
   <br>
+
   ```
-  wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/fedora-basic-setup.sh && bash fedora-basic-setup.sh
+    wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/fedora-basic-setup.sh && bash fedora-basic-setup.sh
   ```
 
 # Libadwaita Theme Changer
