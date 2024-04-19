@@ -10,13 +10,24 @@ C="$(printf '\033[1;36m')"
 check_prefix() {
   case "$PREFIX" in
     *com.termux*)
-      read -p $' \e[1;31m[\e[0m\e[1;77m~\e[0m\e[1;31m]\e[0m\e[1;92m Input Username [Lowercase] : \e[0m\e[1;96m\en' user
-      echo -e "${W}"
-      ;;
-    *)
-      user=$(whoami)
-      ;;
-  esac
+      while true; do
+    read -p "${R}[${W}-${R}]${G}Input username [Lowercase]: "${W} user_name
+    echo
+    read -p "${R}[${W}-${R}]${Y}Do you want to continue with username ${C}$user_name ${Y}? (y/n) : "${W} choice
+	choice="${choice:-y}"
+    case $choice in
+        [yY]* )
+            echo "${R}[${W}-${R}]${G}Continuing with username ${C}$user_name"${W}
+            break;;
+        [nN]* )
+             echo "${G}Please provide username and password again."${W}
+            echo
+            ;;
+        * )
+            echo "${R}Invalid input. Please enter 'y' or 'n'."${W}
+            ;;
+    esac
+done
 }
 
 check_file() {

@@ -9,7 +9,8 @@ This script automates the installation of oh-my-zsh, zsh-autosuggestion, and cus
    wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
 ```
 # Fedora (Gnome) Basic Setup
-If you newly install fedora in your system , you need to do some basic setup this script do that for you like :-
+
+<b>A simple script to make some basic setup in freshly install fedora, like:-</b>
 - Install all basic drivers , multimedia codecs 
 - Enable RPM Fusion
 - Enable colored Emojis 
@@ -46,7 +47,15 @@ If you newly install fedora in your system , you need to do some basic setup thi
   - ransparent Window Moving by Noobsai
   - User Themes by fmuellner
   - Vitals by corecoding
-  
+  <br>
   ```
   wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/fedora-basic-setup.sh && bash fedora-basic-setup.sh
   ```
+
+# Libadwaita Theme Changer
+
+<b>A simple script to change Libadwaita theme</b>
+
+```
+ wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/libadwaita-theme-changer.sh && bash libadwaita-theme-changer.sh
+```

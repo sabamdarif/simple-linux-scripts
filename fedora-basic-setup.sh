@@ -21,10 +21,11 @@ basic_task() {
     #installing codecs and other dependencies for playing videos:
   sudo dnf install gstreamer1-plugins-{bad-*,good-*,base} gstreamer1-plugin-openh264 gstreamer1-libav --exclude=gstreamer1-plugins-bad-free-devel -y
   sudo dnf group upgrade --with-optional Multimedia -y
-  sudo dnf install libdvdcss -y
+  sudo dnf install libdvdcss libavcodec-freeworld gstreamer1-vaapi -y
+   sudo dnf install libva-utils -y
   sudo dnf install *-firmware -y
   sudo dnf groupupdate sound-and-video
-  sudo dnf swap ffmpeg-free ffmpeg --allowerasing -y 
+  sudo dnf swap ffmpeg-free ffmpeg --allowerasing -y
 }
 
 tweaks() {
@@ -153,12 +154,12 @@ cd auto-cpufreq && sudo ./auto-cpufreq-installer
 cd 
 rm -rf auto-cpufreq
 else
-echo "${G}Canceling extreme battery saving"${W}
+echo "${G}Canceling extreme battery saving setup..."${W}
 fi
 }
 
 install_extensions() {
-  array=( appindicatorsupport@rgcjonas.gmail.com bluetooth-quick-connect@bjarosze.gmail.com blur-my-shell@aunetx caffeine@patapon.info clipboard-indicator@tudmotu.com compiz-alike-magic-lamp-effect@hermes83.github.com compiz-windows-effect@hermes83.github.com CoverflowAltTab@palatis.blogspot.com dash-to-dock@micxgx.gmail.com desktop-cube@schneegans.github.com desktop-lyric@tuberry ding@rastersoft.com drive-menu@gnome-shell-extensions.gcampax.github.com emoji-copy@felipeftn expandable-notifications@kaan.g.inam.org forge@jmmaranan.com gnome-ui-tune@itstime.tech gsconnect@andyholmes.github.io hidetopbar@mathieu.bidon.ca nightthemeswitcher@romainvigier.fr osd-volume-number@deminder rounded-window-corners@yilozt search-light@icedman.github.com simplenetspeed@biji.extension tiling-assistant@leleat-on-github transparent-window-moving@noobsai.github.com user-theme@gnome-shell-extensions.gcampax.github.com Vitals@CoreCoding.com )
+  array=( appindicatorsupport@rgcjonas.gmail.com bluetooth-quick-connect@bjarosze.gmail.com blur-my-shell@aunetx caffeine@patapon.info clipboard-indicator@tudmotu.com compiz-alike-magic-lamp-effect@hermes83.github.com compiz-windows-effect@hermes83.github.com CoverflowAltTab@palatis.blogspot.com dash-to-dock@micxgx.gmail.com desktop-cube@schneegans.github.com desktop-lyric@tuberry ding@rastersoft.com drive-menu@gnome-shell-extensions.gcampax.github.com hidetopbar@mathieu.bidon.ca emoji-copy@felipeftn expandable-notifications@kaan.g.inam.org forge@jmmaranan.com gnome-ui-tune@itstime.tech gsconnect@andyholmes.github.io hidetopbar@mathieu.bidon.ca nightthemeswitcher@romainvigier.fr osd-volume-number@deminder rounded-window-corners@yilozt search-light@icedman.github.com simplenetspeed@biji.extension tiling-assistant@leleat-on-github transparent-window-moving@noobsai.github.com user-theme@gnome-shell-extensions.gcampax.github.com Vitals@CoreCoding.com )
 
 for i in "${array[@]}"
 do
