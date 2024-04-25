@@ -8,26 +8,31 @@ W="$(printf '\033[1;37m')"
 C="$(printf '\033[1;36m')"
 
 check_prefix() {
-  case "$PREFIX" in
+ case "$PREFIX" in
     *com.termux*)
         while true; do
             read -p "${R}[${W}-${R}]${G}Input username [Lowercase]: ${W}" user_name
             echo
-            read -p "${R}[${W}-${R}]${Y}Do you want to continue with username ${C}$user_name ${Y}? (y/n) : ${W}" choice
+            read -p "${R}[${W}-${R}]${Y}Do you want to continue with username ${C}$user_name ${Y}? (y/n) : "${W} choice
             choice="${choice:-y}"
+            echo "${R}[${W}-${R}]${G}Continuing with answer: $choice"${W}
+				sleep 0.3
             case $choice in
                 [yY]* )
-                    echo "${R}[${W}-${R}]${G}Continuing with username ${C}$user_name${W}"
+                    echo "${R}[${W}-${R}]${G}Continuing with username ${C}$user_name"${W}
                     break;;
                 [nN]* )
-                    echo "${G}Please provide username and password again.${W}"
+                    echo "${G}Please provide username and password again."${W}
                     echo
                     ;;
                 * )
-                    echo "${R}Invalid input. Please enter 'y' or 'n'.${W}"
+              echo "${R}Invalid input. Please enter 'y' or 'n'.${W}"
                     ;;
             esac
         done
+        ;;
+    *)
+        user_name=$(whoami)
         ;;
 esac
 
@@ -73,9 +78,9 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ~/.oh-my-zsh/
 setup_theme() {
 	cat << EOF > ~/.oh-my-zsh/themes/kalistyle.zsh-theme
 	local return_code="%(?..%{\$fg[red]%}%? ↵%{\$reset_color%})"
-local user_name="$user@localhost"  # Replace with your desired name
+local user="$user_name@localhost"  # Replace with your desired name
 
-local user_host="%B%F{green}┌──(%F{reset}\$user_name%F{green})-%F{green}[%F{reset}%B%{\$fg[blue]%}%~%b%F{blue}%B%F{green}]%F{reset}"
+local user_host="%B%F{green}┌──(%F{reset}\$user%F{green})-%F{green}[%F{reset}%B%{\$fg[blue]%}%~%b%F{blue}%B%F{green}]%F{reset}"
 
 local user_symbol='%B%F{green}%(!.#.└─≽)%F{reset}'
 
