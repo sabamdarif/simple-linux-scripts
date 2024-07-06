@@ -91,7 +91,6 @@ chmod +x install.sh
 # open dconf editor
 # go to /org/gnome/desktop/sound/
 # enable Allow volume above 100%
-
 }
 
 usefull_settings_and_apps() {
@@ -100,15 +99,21 @@ usefull_settings_and_apps() {
     sudo dnf install gnome-shell-extensions gnome-extensions-app -y
     flatpak install flathub com.mattjakeman.ExtensionManager
     # GDM settings 
-    flatpak install flathub io.github.realmazharhussain.GdmSettings
+    flatpak install flathub io.github.realmazharhussain.GdmSettings -y
+    flatpak install flathub io.gitlab.adhami3310.Converter -y
+    flatpak install flathub org.gnome.Shotwell -y
+    flatpak install flathub fr.handbrake.ghb -y
     sudo dnf install vlc -y
+    sudo dnf install file-roller -y
      #system monitor
-     read -p "${Y} Do you want to install a system monitor? (y/n): "${W} mon_choice
+     read -p "${Y} Do you want to install a system monitor and cleaner? (y/n): "${W} mon_choice
      if [ "$mon_choice" = "y" ]; then
      echo "${G} Instaling System Monitor (STACER)"${W}
      sudo dnf install stacer -y
+     echo "${G} Instaling System Cleaner (bleachbit)"${W}
+     sudo dnf install bleachbit -y
      else
-     echo "${G} Canceling Sys Monitor install ...."
+     echo "${G} Canceling System Monitor cleaner install ...."
      sleep 1
      fi
   #set custome cursor size 
@@ -133,7 +138,7 @@ while true; do
 done
 #change volume steps
 read -p "${G} Do you want to change volume steps? (y/n): "${W} choice_vol
-
+choice_vol=${choice_vol:-y}
 if [ "$choice_vol" = "y" ]; then
     current_steps=$(gsettings get org.gnome.settings-daemon.plugins.media-keys volume-step)
     echo "${G} The cursor size is: $current_steps"${W}
@@ -156,10 +161,26 @@ rm -rf auto-cpufreq
 else
 echo "${G}Canceling extreme battery saving setup..."${W}
 fi
+read -p "${Y}Do you want to setup nautilus tools (add more usefull features in nautilus)(y/n): "${W} nautilus_tools
+nautilus_tools=${nautilus_tools:-y}
+if [[ "$nautilus_tools" == "y" ]]; then
+echo "${G}Setting up nautilus-scripts" ${W}
+dnf copr enable tomaszgasior/mushrooms
+sudo dnf install nautilus-admin -y
+sudo dnf install sushi -y
+sudo dnf install --allowerasing p7zip ImageMagick xz poppler-utils ffmpeg-free genisoimage foremost testdisk rdfind squashfs-tools -y
+sudo dnf install --allowerasing bzip2 gzip tar unzip zip pandoc jpegoptim optipng ghostscript qpdf testdisk perl-base rhash -y
+cd $HOME
+git clone https://github.com/cfgnunes/nautilus-scripts.git
+cd $HOME/nautilus-scripts
+bash install.sh
+else
+echo "${G}Canceling nautilus-tools setup"${W}
+fi
 }
 
 install_extensions() {
-  array=( appindicatorsupport@rgcjonas.gmail.com bluetooth-quick-connect@bjarosze.gmail.com blur-my-shell@aunetx caffeine@patapon.info clipboard-indicator@tudmotu.com compiz-alike-magic-lamp-effect@hermes83.github.com compiz-windows-effect@hermes83.github.com CoverflowAltTab@palatis.blogspot.com dash-to-dock@micxgx.gmail.com desktop-cube@schneegans.github.com desktop-lyric@tuberry ding@rastersoft.com drive-menu@gnome-shell-extensions.gcampax.github.com hidetopbar@mathieu.bidon.ca emoji-copy@felipeftn expandable-notifications@kaan.g.inam.org forge@jmmaranan.com gnome-ui-tune@itstime.tech gsconnect@andyholmes.github.io hidetopbar@mathieu.bidon.ca nightthemeswitcher@romainvigier.fr osd-volume-number@deminder rounded-window-corners@yilozt search-light@icedman.github.com simplenetspeed@biji.extension tiling-assistant@leleat-on-github transparent-window-moving@noobsai.github.com user-theme@gnome-shell-extensions.gcampax.github.com Vitals@CoreCoding.com )
+  array=(appindicatorsupport@rgcjonas.gmail.com bluetooth-quick-connect@bjarosze.gmail.com blur-my-shell@aunetx caffeine@patapon.info clipboard-indicator@tudmotu.com compiz-alike-magic-lamp-effect@hermes83.github.com compiz-windows-effect@hermes83.github.com CoverflowAltTab@palatis.blogspot.com dash-to-dock@micxgx.gmail.com desktop-cube@schneegans.github.com desktop-lyric@tuberry ding@rastersoft.com drive-menu@gnome-shell-extensions.gcampax.github.com hidetopbar@mathieu.bidon.ca emoji-copy@felipeftn expandable-notifications@kaan.g.inam.org forge@jmmaranan.com gnome-ui-tune@itstime.tech gsconnect@andyholmes.github.io hidetopbar@mathieu.bidon.ca nightthemeswitcher@romainvigier.fr osd-volume-number@deminder rounded-window-corners@yilozt  search-light@icedman.github.com simplenetspeed@biji.extension tiling-assistant@leleat-on-github transparent-window-moving@noobsai.github.com user-theme@gnome-shell-extensions.gcampax.github.com Vitals@CoreCoding.com just-perfection-desktop@just-perfection impatience@gfxmonk.net)
 
 for i in "${array[@]}"
 do
@@ -177,15 +198,123 @@ do
 done
 }
 
-install_zsh() {
+install_zsh_terminal_utilities() {
 read -p "${G} Do you want to zsh , zsh syntax highlight , zsh autusuggestion? (y/n): "${W} zsh_choice
+zsh_choice=${zsh_choice:-y}
 if [ "$zsh_choice" = "y" ]; then
+shell_name="zsh"
 sudo dnf install wget -y && wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
 rm install-zsh.sh
 else
+shell_name="bash"
 echo "${G} Canceling zsh setup..."${W}
 sleep 1
-
+read -p "${Y}Do you want to add terminal utilities (y/n): "${W} terminal_utilities
+terminal_utilities=${terminal_utilities:-y}
+sudo dnf install zoxide bat eza trash-cli -y
+if [[ "$terminal_utilities" == "y" ]]; then
+cat <<'EOF' >> "$HOME/.${shell_name}rc"
+alias dnf='sudo dnf $@'
+alias cat='bat $@'
+alias ls='eza --icons $@'
+alias neofetch='fastfetch'
+export GPG_TTY=$(tty)
+#set zoxide as cd
+eval "$(zoxide init --cmd cd zsh)"
+# Alias's to change the directory
+alias web='cd /var/www/html'
+# Alias's to modified commands
+alias rm='trash -v'
+alias trashlist='trash-list'
+alias cleantrash='trash-empty'
+alias mkdir='mkdir -p'
+alias vi='nvim'
+alias vim='nvim'
+# Search files in the current folder
+alias f="find . | grep "
+#######################################################
+# SPECIAL FUNCTIONS
+#######################################################
+# Extracts any archive(s) (if unp isn't installed)
+extract() {
+	for archive in "$@"; do
+		if [ -f "$archive" ]; then
+			case $archive in
+			*.tar.bz2) tar xvjf $archive ;;
+                        *.tar.xz) tar -xvf $archive ;;
+                        *.tar.gz) tar -xzvf $archive ;;
+			*.tar.gz) tar xvzf $archive ;;
+			*.bz2) bunzip2 $archive ;;
+			*.rar) rar x $archive ;;
+			*.gz) gunzip $archive ;;
+			*.tar) tar xvf $archive ;;
+			*.tbz2) tar xvjf $archive ;;
+			*.tgz) tar xvzf $archive ;;
+			*.zip) unzip $archive ;;
+			*.Z) uncompress $archive ;;
+			*.7z) 7z x $archive ;;
+			*) echo "don't know how to extract '$archive'..." ;;
+			esac
+		else
+			echo "'$archive' is not a valid file!"
+		fi
+	done
+}
+# Searches for text in all files in the current folder
+ftext() {
+	# -i case-insensitive
+	# -I ignore binary files
+	# -H causes filename to be printed
+	# -r recursive search
+	# -n causes line number to be printed
+	# optional: -F treat search term as a literal, not a regular expression
+	# optional: -l only print filenames and not the matching lines ex. grep -irl "$1" *
+	grep -iIHrn --color=always "$1" . | less -r
+}
+# Copy file with a progress bar
+cpp() {
+	set -e
+	strace -q -ewrite cp -- "${1}" "${2}" 2>&1 |
+		awk '{
+	count += $NF
+	if (count % 10 == 0) {
+		percent = count / total_size * 100
+		printf "%3d%% [", percent
+		for (i=0;i<=percent;i++)
+			printf "="
+			printf ">"
+			for (i=percent;i<100;i++)
+				printf " "
+				printf "]\r"
+			}
+		}
+	END { print "" }' total_size="$(stat -c '%s' "${1}")" count=0
+}
+# Copy and go to the directory
+cpg() {
+	if [ -d "$2" ]; then
+		cp "$1" "$2" && cd "$2"
+	else
+		cp "$1" "$2"
+	fi
+}
+# Move and go to the directory
+mvg() {
+	if [ -d "$2" ]; then
+		mv "$1" "$2" && cd "$2"
+	else
+		mv "$1" "$2"
+	fi
+}
+# Create and go to the directory
+mkdirg() {
+	mkdir -p "$1"
+	cd "$1"
+}
+EOF
+else
+echo "${G}Canceling terminal utilities setup"
+fi
 }
 
 
