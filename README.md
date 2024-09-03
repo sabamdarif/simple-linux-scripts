@@ -7,7 +7,7 @@
 - <b>Install zsh and git first</b>
 > apt install git zsh -y
 ```
-   wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
+   wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
 ```
 # Fedora (Gnome) Basic Setup
 
@@ -51,7 +51,7 @@
   <br>
 
   ```
-    wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/fedora-basic-setup.sh && bash fedora-basic-setup.sh
+    wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/fedora-basic-setup.sh && bash fedora-basic-setup.sh
   ```
 
 # Libadwaita Theme Changer
@@ -67,7 +67,7 @@
 > pkg install openssh -y
 
 ```
-   wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/termux-ssh ; chmod +x termux-ssh ; ./termux-ssh
+   wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/termux-ssh ; chmod +x termux-ssh ; ./termux-ssh
 ```
 - `./termux-ssh` To setup password and start ssh
 - `./termux-ssh start` To only start ssh
