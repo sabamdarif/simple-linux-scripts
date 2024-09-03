@@ -58,7 +58,7 @@ EOF
         mkdir -p "$HOME/.themes/"
         sudo flatpak override --filesystem=$HOME/.icons
     fi
-
+    sudo flatpak override --filesystem=xdg-config/gtk-4.0
     #fixing shortcut adding issue for browser
 installed_apps=$(flatpak list --app --columns=ref)
 keywords=("com.google.Chrome" "com.microsoft.Edge" "com.brave.Browser" "ru.yandex.Browser" "org.chromium.Chromium" "com.opera.Opera")
@@ -105,6 +105,7 @@ usefull_settings_and_apps() {
     flatpak install flathub fr.handbrake.ghb -y
     sudo dnf install vlc -y
     sudo dnf install file-roller -y
+    sudo dnf install qt6ct qt5ct -y
      #system monitor
      read -p "${Y} Do you want to install a system monitor and cleaner? (y/n): "${W} mon_choice
      if [ "$mon_choice" = "y" ]; then
