@@ -1,10 +1,11 @@
 # Install-zsh
 
-This script automates the installation of oh-my-zsh, zsh-autosuggestion, and customizes the terminal look like Kali terminal on any distribution and also in Termux.
+<b>This script automates the installation of oh-my-zsh, zsh-autosuggestion, and customizes the terminal look like Kali terminal on any distribution and also in Termux.</b>
 
 ## Steps
 
 - <b>Install zsh and git first</b>
+> apt install git zsh -y
 ```
    wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
 ```
@@ -60,3 +61,14 @@ This script automates the installation of oh-my-zsh, zsh-autosuggestion, and cus
 ```
  wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/libadwaita-theme-changer.sh && bash libadwaita-theme-changer.sh
 ```
+# Start ssh in termux
+
+- <b>Install `openssh` first</b>
+> pkg install openssh -y
+
+```
+   wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/termux-ssh ; chmod +x termux-ssh ; ./termux-ssh
+```
+- `./termux-ssh` To setup password and start ssh
+- `./termux-ssh start` To only start ssh
+- `./termux-ssh stop` To stop ss
