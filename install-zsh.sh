@@ -1,14 +1,13 @@
 #!/bin/bash
 
-
 R="$(printf '\033[1;31m')"
 G="$(printf '\033[1;32m')"
 Y="$(printf '\033[1;33m')"
-W="$(printf '\033[1;37m')"
+W="$(printf '\033[0m')"
 C="$(printf '\033[1;36m')"
 
 check_prefix() {
- case "$PREFIX" in
+ case "$PREFIX" icn
     *com.termux*)
         while true; do
             read -p "${R}[${W}-${R}]${G}Input username [Lowercase]: ${W}" user_name
@@ -66,6 +65,7 @@ zsh_setup() {
 	wget https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh
 	sed -i -e 's/exec zsh -l/#exec zsh -l/g' install.sh
 	#sed -i -e 's/#setup_shell()/setup_shell()/g' ~/install.sh
+  sed -i '/printf .*Do you want to change your default shell to zsh/,/read -r opt/c\opt="y"' "install.sh"
 	bash install.sh
 	rm install.sh
 git clone https://github.com/zsh-users/zsh-autosuggestions ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions
@@ -123,7 +123,25 @@ print_success() {
 	echo -e "${C}Or Log Out And Log Back In Again${W}"
 }
 
-check_prefix
+check_paramitter() {
+  if [[ "$1" == "-u" ]]; then
+  name="$2"
+    if [[ $HOME == *termux* ]]; then
+      if [[ ! -z $name ]]; then
+      user_name="$name"
+      else
+      read -p "${G}Please enter your user name: "${W} name
+      user_name="$name"
+      fi
+    else
+    user_name=$(whoami)
+    fi
+  else
+  check_prefix
+  fi
+}
+
+check_paramitter
 zsh_setup
 setup_theme
 print_success

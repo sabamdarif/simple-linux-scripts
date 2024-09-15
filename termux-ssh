@@ -38,7 +38,12 @@ function stop_ssh() {
 
 case $1 in
 start)
-    start_ssh
+if [[ ! -f "$MARKER_FILE" ]]; then
+echo "${G}Enter your ssh password${RESET}"
+passwd
+touch "$MARKER_FILE"
+fi
+start_ssh
     ;;
 stop)
     stop_ssh
@@ -51,11 +56,9 @@ termux-ssh          to set passwd and start ssh\n
 "
     ;;
 *)
-if [[ ! -f "$MARKER_FILE" ]]; then
 echo "${G}Enter your ssh password${RESET}"
 passwd
 touch "$MARKER_FILE"
-fi
 start_ssh
 ;;
 esac
