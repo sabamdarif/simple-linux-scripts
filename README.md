@@ -4,8 +4,8 @@
 
 ## Steps
 
-- <b>Install zsh and git first</b>
-> apt install git zsh -y
+- <b>Install wget, zsh and git first</b>
+> apt install wget git zsh -y
 ```
    wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
 ```

@@ -7,7 +7,7 @@ W="$(printf '\033[0m')"
 C="$(printf '\033[1;36m')"
 
 check_prefix() {
- case "$PREFIX" icn
+ case "$PREFIX" in
     *com.termux*)
         while true; do
             read -p "${R}[${W}-${R}]${G}Input username [Lowercase]: ${W}" user_name
@@ -25,7 +25,7 @@ check_prefix() {
                     echo
                     ;;
                 * )
-              echo "${R}Invalid input. Please enter 'y' or 'n'.${W}"
+                    echo "${R}Invalid input. Please enter 'y' or 'n'.${W}"
                     ;;
             esac
         done
@@ -34,7 +34,6 @@ check_prefix() {
         user_name=$(whoami)
         ;;
 esac
-
 }
 
 check_file() {
@@ -50,29 +49,26 @@ if [ -e "install.sh" ]; then
 else
   echo -e "${Y}No file named install.sh found in the current directory.${W}"
 fi
-
 }
 
 zsh_setup() {
 	clear
 	echo "${Y}please wait ......"${W}
-	echo "${C}until you get the success massage "${W}
+	echo "${C}until you get the success message"${W}
 	sleep 1.3
 	cd ~
 	check_file
-	#echo -e "${C} Now you automaticly login into${W} ${G} ZSH ${W} ${C}so first quit it and wait for${W} ${Y} SETUP SUCCESSFULL MASSAGE ${W}."
 	sleep 1.5
 	wget https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh
 	sed -i -e 's/exec zsh -l/#exec zsh -l/g' install.sh
-	#sed -i -e 's/#setup_shell()/setup_shell()/g' ~/install.sh
-  sed -i '/printf .*Do you want to change your default shell to zsh/,/read -r opt/c\opt="y"' "install.sh"
+	sed -i '/printf .*Do you want to change your default shell to zsh/,/read -r opt/c\opt="y"' "install.sh"
 	bash install.sh
 	rm install.sh
-git clone https://github.com/zsh-users/zsh-autosuggestions ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions
-git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ~/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting
+	git clone https://github.com/zsh-users/zsh-autosuggestions ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions
+	git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ~/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting
 	sed -i -e 's/ZSH_THEME="robbyrussell"/ZSH_THEME="kalistyle"/g' ~/.zshrc
 	sed -i -e 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting)/g' ~/.zshrc
-        echo "setopt nonomatch" >> ~/.zshrc
+    echo "setopt nonomatch" >> ~/.zshrc
 }
 
 setup_theme() {
@@ -119,29 +115,23 @@ EOF
 print_success() {
 	clear
 	rm install-zsh.sh
-	echo -e "${G}ZSH SETUP SUCCESSFULL ${W} ${C} Now Restart the Terminal ${W}"
+	echo -e "${G}ZSH SETUP SUCCESSFUL${W} ${C}Now Restart the Terminal${W}"
 	echo -e "${C}Or Log Out And Log Back In Again${W}"
 }
 
 check_paramitter() {
   if [[ "$1" == "-u" ]]; then
-  name="$2"
-    if [[ $HOME == *termux* ]]; then
-      if [[ ! -z $name ]]; then
-      user_name="$name"
-      else
-      read -p "${G}Please enter your user name: "${W} name
-      user_name="$name"
-      fi
-    else
-    user_name=$(whoami)
+    user_name="$2"
+    if [[ "$HOME" == *termux* && -z "$user_name" ]]; then
+      read -p "${G}Please enter your user name: ${W}" user_name
     fi
-  else
-  check_prefix
+    return
   fi
+
+  check_prefix
 }
 
-check_paramitter
+check_paramitter "$@"
 zsh_setup
 setup_theme
 print_success
