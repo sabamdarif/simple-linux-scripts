@@ -6,8 +6,9 @@
 
 - <b>Install wget, zsh and git first</b>
 > apt install wget git zsh -y
-```
-   wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
+
+```bash
+wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
 ```
 # Fedora (Gnome) Basic Setup
 
@@ -50,25 +51,49 @@
   - Vitals by corecoding
   <br>
 
-  ```
-    wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/fedora-basic-setup.sh && bash fedora-basic-setup.sh
-  ```
+```bash
+wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/fedora-basic-setup.sh && bash fedora-basic-setup.sh
+```
 
 # Libadwaita Theme Changer
 
 <b>A simple script to change Libadwaita theme</b>
 
-```
- wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/libadwaita-theme-changer.sh && bash libadwaita-theme-changer.sh
+```bash
+wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/libadwaita-theme-changer.sh && bash libadwaita-theme-changer.sh
 ```
 # Start ssh in termux
 
 - <b>Install `openssh` first</b>
 > pkg install openssh -y
 
-```
-   wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/termux-ssh ; chmod +x termux-ssh ; ./termux-ssh
+```bash
+wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/termux-ssh && chmod +x termux-ssh && ./termux-ssh
 ```
 - `./termux-ssh` To setup password and start ssh
 - `./termux-ssh start` To only start ssh
-- `./termux-ssh stop` To stop ss
+- `./termux-ssh stop` To stop ssh
+
+# Better termux
+
+<b>Make termux terminal better</b>
+
+```bash
+wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/better-termux.sh && bash better-termux.sh
+```
+- setup zsh with systax highltght and autosuggestion
+- add new font
+- add new home page
+- add new color scheme
+- change apt with nala
+- change cat with bat
+- change neofetch with fastfetch
+- change ls with eza (with icons)
+- change cd with zoxide
+- add option to easily start and stop ssh
+- SPECIAL COMMAND:-
+  - extract: to extract any archive
+  - ftext:  Searches for text in all files in the current folder
+  - cpg: Copy and go to the directory
+  - mvg: Move and go to the directory
+  - mkdirg: Create and go to the directory
