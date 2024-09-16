@@ -25,6 +25,27 @@ function check_and_backup() {
     done
 }
 
+function check_and_create_directory() {
+    if [[ ! -d "$1" ]]; then
+        mkdir -p "$1"
+    fi
+}
+
+function check_and_delete() {
+    local file
+    for files_folders in "$@"; do
+        for file in $files_folders; do
+            if [[ -e "$file" ]]; then
+                if [[ -d "$file" ]]; then
+                    rm -rf "$file" >/dev/null 2>&1
+                elif [[ -f "$file" ]]; then
+                    rm "$file" >/dev/null 2>&1
+                fi
+            fi
+        done
+    done
+}
+
 function package_install_and_check() {
 	packs_list=($@)
 for package_name in "${packs_list[@]}"; do
@@ -97,13 +118,6 @@ clear
 package_install_and_check "openssh"
 wget -O $PREFIX/bin/termux-ssh https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/termux-ssh
 chmod +x $PREFIX/bin/termux-ssh
-if [[ $SHELL = *bash ]]; then
-  shell_name="bash"
-	shell_rc_file="/data/data/com.termux/files/usr/etc/bash.bashrc"
-	elif [[ $SHELL = *zsh ]]; then
-  shell_name="zsh"
-	shell_rc_file="$HOME/.zshrc"
-	fi
 check_and_backup "$PREFIX/etc/motd"
 check_and_backup "$PREFIX/etc/motd-playstore"
 check_and_backup "$PREFIX/etc/motd.sh"
@@ -118,19 +132,29 @@ check_and_create_directory "$HOME/.termux"
 check_and_backup "$HOME/.termux/colors.properties"
 wget -O $HOME/.termux/colors.properties https://raw.githubusercontent.com/sabamdarif/termux-desktop/main/other/colors.properties
 
-cp $shell_rc_file ${shell_rc_file}-2
-check_and_backup "$shell_rc_file"
-mv ${shell_rc_file}-2 $shell_rc_file
+echo "${R}[${W}-${R}]${G}${BOLD} Installing Fonts..."${W}
+	package_install_and_check "nerdfix fontconfig-utils"
+	check_and_create_directory "$HOME/.fonts"
+	check_and_backup "$HOME/.termux/font.ttf"
+	wget -O $HOME/font.zip https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/0xProto.zip
+	unzip "$HOME/font.zip" -d "$HOME/.fonts"
+	check_and_delete "$HOME/.fonts/README.md $HOME/.fonts/LICENSE"
+	rm $HOME/font.zip
+	cp $HOME/.fonts/0xProtoNerdFont-Regular.ttf $HOME/.termux/font.ttf
+	fc-cache -f
+	check_and_create_directory "$HOME/.config/fastfetch"
+	wget -O $HOME/.config/fastfetch/config.jsonc https://raw.githubusercontent.com/sabamdarif/termux-desktop/main/other/config.jsonc 
+
 if type -p pacman >/dev/null 2>&1; then
 	package_install_and_check "bat eza zoxide fastfetch"
 	else
 	package_install_and_check "nala bat eza zoxide fastfetch"
-cat <<'EOF' >> "$shell_rc_file"
+cat <<'EOF' >> "$HOME/.zshrc"
 alias apt='nala $@'
 alias pkg='nala $@'
 EOF
 fi
-cat <<'EOF' >> "$shell_rc_file"
+cat <<'EOF' >> "$HOME/.zshrc"
 alias cat='bat $@'
 alias ls='eza --icons $@'
 alias mkdir='mkdir -p'
@@ -197,10 +221,8 @@ mkdirg() {
 	mkdir -p "$1"
 	cd "$1"
 }
-EOF
-cat <<EOF >> "$shell_rc_file"
 # set zoxide as cd
-eval "\$(zoxide init --cmd cd ${shell_name})"
+eval "$(zoxide init --cmd cd zsh)"
 EOF
 
 clear
