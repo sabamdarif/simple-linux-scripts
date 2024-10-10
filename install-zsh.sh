@@ -54,7 +54,6 @@ fi
 zsh_setup() {
 	clear
 	echo "${Y}please wait ......"${W}
-	echo "${C}until you get the success message"${W}
 	sleep 1.3
 	cd ~
 	check_file
