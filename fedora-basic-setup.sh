@@ -25,7 +25,7 @@ basic_task() {
    sudo dnf install libva-utils -y
   sudo dnf install *-firmware -y
   sudo dnf groupupdate sound-and-video
-  sudo dnf swap ffmpeg-free ffmpeg --allowerasing -y
+  sudo dnf swap ffmpeg-free ffmpeg totem totem-video-thumbnailer --allowerasing -y
 }
 
 tweaks() {
@@ -200,28 +200,30 @@ done
 }
 
 install_zsh_terminal_utilities() {
-read -p "${G} Do you want to zsh , zsh syntax highlight , zsh autusuggestion? (y/n): "${W} zsh_choice
-zsh_choice=${zsh_choice:-y}
-if [ "$zsh_choice" = "y" ]; then
-shell_name="zsh"
-sudo dnf install wget -y && wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
-rm install-zsh.sh
-else
-shell_name="bash"
-echo "${G} Canceling zsh setup..."${W}
-sleep 1
-read -p "${Y}Do you want to add terminal utilities (y/n): "${W} terminal_utilities
-terminal_utilities=${terminal_utilities:-y}
-sudo dnf install zoxide bat eza trash-cli -y
-if [[ "$terminal_utilities" == "y" ]]; then
-cat <<'EOF' >> "$HOME/.${shell_name}rc"
-alias dnf='sudo dnf $@'
-alias cat='bat $@'
-alias ls='eza --icons $@'
+    read -p "${G} Do you want to zsh , zsh syntax highlight , zsh autusuggestion? (y/n): "${W} zsh_choice
+    zsh_choice=${zsh_choice:-y}
+    if [ "$zsh_choice" = "y" ]; then
+        shell_name="zsh"
+        sudo dnf install wget -y && wget https://raw.githubusercontent.com/sabamdarif/short-linux-scripts/main/install-zsh.sh && bash install-zsh.sh
+        rm install-zsh.sh
+    else
+        shell_name="bash"
+        echo "${G} Canceling zsh setup..."${W}
+        sleep 1
+    fi
+    
+    read -p "${Y}Do you want to add terminal utilities (y/n): "${W} terminal_utilities
+    terminal_utilities=${terminal_utilities:-y}
+    if [[ "$terminal_utilities" == "y" ]]; then
+        sudo dnf install zoxide bat eza trash-cli -y
+        cat <<EOF >> "$HOME/.${shell_name}rc"
+alias dnf='sudo dnf \$@'
+alias cat='bat \$@'
+alias ls='eza --icons \$@'
 alias neofetch='fastfetch'
-export GPG_TTY=$(tty)
+export GPG_TTY=\$(tty)
 #set zoxide as cd
-eval "$(zoxide init --cmd cd zsh)"
+eval "\$(zoxide init --cmd cd zsh)"
 # Alias's to change the directory
 alias web='cd /var/www/html'
 # Alias's to modified commands
@@ -238,26 +240,26 @@ alias f="find . | grep "
 #######################################################
 # Extracts any archive(s) (if unp isn't installed)
 extract() {
-	for archive in "$@"; do
-		if [ -f "$archive" ]; then
-			case $archive in
-			*.tar.bz2) tar xvjf $archive ;;
-                        *.tar.xz) tar -xvf $archive ;;
-                        *.tar.gz) tar -xzvf $archive ;;
-			*.tar.gz) tar xvzf $archive ;;
-			*.bz2) bunzip2 $archive ;;
-			*.rar) rar x $archive ;;
-			*.gz) gunzip $archive ;;
-			*.tar) tar xvf $archive ;;
-			*.tbz2) tar xvjf $archive ;;
-			*.tgz) tar xvzf $archive ;;
-			*.zip) unzip $archive ;;
-			*.Z) uncompress $archive ;;
-			*.7z) 7z x $archive ;;
-			*) echo "don't know how to extract '$archive'..." ;;
+	for archive in "\$@"; do
+		if [ -f "\$archive" ]; then
+			case \$archive in
+			*.tar.bz2) tar xvjf \$archive ;;
+                        *.tar.xz) tar -xvf \$archive ;;
+                        *.tar.gz) tar -xzvf \$archive ;;
+			*.tar.gz) tar xvzf \$archive ;;
+			*.bz2) bunzip2 \$archive ;;
+			*.rar) rar x \$archive ;;
+			*.gz) gunzip \$archive ;;
+			*.tar) tar xvf \$archive ;;
+			*.tbz2) tar xvjf \$archive ;;
+			*.tgz) tar xvzf \$archive ;;
+			*.zip) unzip \$archive ;;
+			*.Z) uncompress \$archive ;;
+			*.7z) 7z x \$archive ;;
+			*) echo "don't know how to extract '\$archive'..." ;;
 			esac
 		else
-			echo "'$archive' is not a valid file!"
+			echo "'\$archive' is not a valid file!"
 		fi
 	done
 }
@@ -269,15 +271,15 @@ ftext() {
 	# -r recursive search
 	# -n causes line number to be printed
 	# optional: -F treat search term as a literal, not a regular expression
-	# optional: -l only print filenames and not the matching lines ex. grep -irl "$1" *
-	grep -iIHrn --color=always "$1" . | less -r
+	# optional: -l only print filenames and not the matching lines ex. grep -irl "\$1" *
+	grep -iIHrn --color=always "\$1" . | less -r
 }
 # Copy file with a progress bar
 cpp() {
 	set -e
-	strace -q -ewrite cp -- "${1}" "${2}" 2>&1 |
+	strace -q -ewrite cp -- "\$1" "\$2" 2>&1 |
 		awk '{
-	count += $NF
+	count += \$NF
 	if (count % 10 == 0) {
 		percent = count / total_size * 100
 		printf "%3d%% [", percent
@@ -289,39 +291,39 @@ cpp() {
 				printf "]\r"
 			}
 		}
-	END { print "" }' total_size="$(stat -c '%s' "${1}")" count=0
+	END { print "" }' total_size="\$(stat -c '%s' "\$1")" count=0
 }
 # Copy and go to the directory
 cpg() {
-	if [ -d "$2" ]; then
-		cp "$1" "$2" && cd "$2"
+	if [ -d "\$2" ]; then
+		cp "\$1" "\$2" && cd "\$2"
 	else
-		cp "$1" "$2"
+		cp "\$1" "\$2"
 	fi
 }
 # Move and go to the directory
 mvg() {
-	if [ -d "$2" ]; then
-		mv "$1" "$2" && cd "$2"
+	if [ -d "\$2" ]; then
+		mv "\$1" "\$2" && cd "\$2"
 	else
-		mv "$1" "$2"
+		mv "\$1" "\$2"
 	fi
 }
 # Create and go to the directory
 mkdirg() {
-	mkdir -p "$1"
-	cd "$1"
+	mkdir -p "\$1"
+	cd "\$1"
 }
 EOF
-else
-echo "${G}Canceling terminal utilities setup"
-fi
+        echo "${G}Terminal utilities setup completed"
+    else
+        echo "${G}Canceling terminal utilities setup"
+    fi
 }
-
 
 update_sys
 basic_task
 tweaks
-install_zsh
+install_zsh_terminal_utilities
 usefull_settings_and_apps
 install_extensions
