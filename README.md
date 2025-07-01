@@ -97,3 +97,16 @@ wget https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/bett
   - cpg: Copy and go to the directory
   - mvg: Move and go to the directory
   - mkdirg: Create and go to the directory
+
+# Rum
+
+<b>Switch between multiple versions of wine and prefixes via a simple bash script</b>
+
+## Uses
+`rum <absolute-path-to-wine-build> </path/to/wineprefix> <wine|winetricks|command> [args...]`
+
+- Ex:- `rum /home/arif/Downloads/caffe-10.8 /home/arif/.wine winecfg`
+
+```bash
+wget -O $HOME/.local/bin/rum https://raw.githubusercontent.com/sabamdarif/simple-linux-scripts/main/rum && chmod +x $HOME/.local/bin/rum
+```

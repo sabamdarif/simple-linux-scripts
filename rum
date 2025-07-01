@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+# Based on:- https://gitlab.com/xkero/rum
+
+error() {
+  echo -e "$@"
+  exit 1
+}
+
+# Require at least 3 arguments: <wine-path> <wineprefix> <command>...
+[[ $# -lt 3 ]] && error "Not enough arguments!\nUsage: rum <absolute-path-to-wine-build> </path/to/wineprefix> <wine|winetricks|command> [args...]"
+
+winepath="$1"; shift
+export WINEPREFIX="$(readlink -f "$1")"; shift
+
+# Validate wine path
+[[ -d "$winepath" ]] || error "Error! The given Wine path doesn't exist or is not a directory!"
+
+# Validate wine binary
+[[ -x "$winepath/bin/wine" ]] || error "Error! $winepath/bin/wine not found or not executable!"
+
+# Create prefix if missing
+if [[ ! -d "$WINEPREFIX" ]]; then
+  read -p "Wine prefix doesn't exist, create it? [Y/n] " -s -n 1 -r
+  echo
+  [[ "$REPLY" =~ ^[Nn]$ ]] && error "Prefix creation aborted." || mkdir -p "$WINEPREFIX" || error "Could not create prefix directory."
+fi
+
+# Set environment for custom wine
+export PATH="$winepath/bin:$PATH"
+export LD_LIBRARY_PATH="$winepath/lib:$LD_LIBRARY_PATH"
+export WINEDLLOVERRIDES="winemenubuilder.exe=d"
+export WINESERVER="$winepath/bin/wineserver"
+export WINELOADER="$winepath/bin/wine"
+export WINEDLLPATH="$winepath/lib/wine"
+
+echo "Rumming $winepath ($(wine --version)) in: $WINEPREFIX"
+
+# Run command with correct environment
+case "$1" in
+  wine*|winetricks|winecfg|regedit)
+    exec env WINEPREFIX="$WINEPREFIX" "$@"
+    ;;
+  *)
+    exec "$winepath/bin/wine" "$@"
+    ;;
+esac
