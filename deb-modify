@@ -1,0 +1,258 @@
+#!/bin/bash
+# An "all-you-need" script to unpack, modify, and repack Debian packages
+# with validation and permission checks for robustness.
+#
+# Original credits:
+# bean1975 (http://ubuntuforums.org/member.php?u=58325)
+# Loevborg (http://ubuntuforums.org/member.php?u=103957)
+
+# --- Dependency Check ---
+# Checks if the required dpkg-deb command is available.
+check_dependencies() {
+    if ! command -v dpkg-deb &> /dev/null; then
+        echo "❌ Error: Required command 'dpkg-deb' is not found."
+        echo "   Please install the 'dpkg-dev' package (e.g., 'sudo apt-get install dpkg-dev') and try again."
+        exit 1
+    fi
+}
+
+# --- Main command handler ---
+COMMAND="$1"
+ARGUMENT="$2"
+
+# Function to display how to use the script
+usage() {
+    echo "A tool to unpack, validate, and repack Debian (.deb) packages."
+    echo ""
+    echo "Usage: $0 [command] [argument]"
+    echo ""
+    echo "Commands:"
+    echo "  --unpack package-name.deb   Unpacks the .deb file into a new folder named 'package-name'"
+    echo "  --repack package-name       Validates, corrects permissions, and repacks the 'package-name' folder"
+    echo ""
+    echo "Options:"
+    echo "  --root-owner                Force root ownership (requires sudo)"
+    echo "  --preserve-owner            Keep current file ownership (suppresses warnings)"
+    echo ""
+    exit 1
+}
+
+# --- Unpack command logic ---
+unpack_package() {
+    if [[ -z "$ARGUMENT" ]]; then
+        echo "Error: Missing .deb file for --unpack."
+        usage
+    fi
+    if [[ ! -f "$ARGUMENT" ]]; then
+        echo "Error: File '$ARGUMENT' not found."
+        exit 1
+    fi
+
+    DEBFILE="$ARGUMENT"
+    DIRNAME=$(basename "$DEBFILE" .deb)
+
+    if [[ -d "$DIRNAME" ]]; then
+        echo "Error: Directory '$DIRNAME' already exists. Please remove it first."
+        exit 1
+    fi
+
+    echo "Unpacking '$DEBFILE' into '$DIRNAME/'..."
+
+    mkdir -p "$DIRNAME" || exit 1
+    dpkg-deb -x "$DEBFILE" "$DIRNAME"
+    dpkg-deb --control "$DEBFILE" "$DIRNAME/DEBIAN"
+
+    if [[ ! -e "$DIRNAME/DEBIAN/control" ]]; then
+        echo "Error: DEBIAN/control file not found after extraction."
+        rm -r "$DIRNAME"
+        exit 1
+    fi
+
+    echo "✅ Successfully unpacked. You can now modify files in the '$DIRNAME/' directory."
+    echo "When you are done, run: $0 --repack '$DIRNAME'"
+}
+
+# --- Control file validation logic ---
+validate_control_file() {
+    local DIRNAME="$1"
+    local CONTROL_FILE="$DIRNAME/DEBIAN/control"
+    
+    if [ ! -f "$CONTROL_FILE" ]; then
+        echo "❌ Error: Cannot find control file at '$CONTROL_FILE'."
+        exit 1
+    fi
+    
+    echo "🔎 Validating DEBIAN/control file fields..."
+    
+    local MANDATORY_FIELDS=("Package" "Version" "Architecture" "Maintainer" "Description")
+    
+    for FIELD in "${MANDATORY_FIELDS[@]}"; do
+        if ! grep -q -E "^${FIELD}:" "$CONTROL_FILE"; then
+            echo "❌ Error: Mandatory field '${FIELD}:' is missing from '$CONTROL_FILE'."
+            echo "   Please add the field and try again. Script stopped."
+            exit 1
+        fi
+    done
+    
+    if ! grep -q -E "^Installed-Size:" "$CONTROL_FILE"; then
+        echo "❌ Error: Field 'Installed-Size:' is missing from '$CONTROL_FILE'."
+        
+        local TOTAL_SIZE=$(du -sk "$DIRNAME" | cut -f1)
+        local DEBIAN_SIZE=$(du -sk "$DIRNAME/DEBIAN" | cut -f1)
+        local CALC_SIZE=$((TOTAL_SIZE - DEBIAN_SIZE))
+        
+        echo "   💡 Note: A calculated size is $CALC_SIZE. Add the line 'Installed-Size: $CALC_SIZE' to the control file."
+        echo "   Please add the field and try again. Script stopped."
+        exit 1
+    fi
+
+    echo "   ✅ All essential fields are present."
+    
+    # Check for common control file issues
+    echo "🔎 Checking control file format..."
+    
+    # Check for empty lines at the end
+    if [[ $(tail -c1 "$CONTROL_FILE" | wc -l) -eq 0 ]]; then
+        echo "   ⚠️  Adding missing newline at end of control file..."
+        echo "" >> "$CONTROL_FILE"
+    fi
+    
+    # Check for Windows line endings
+    if grep -q $'\r' "$CONTROL_FILE"; then
+        echo "   ⚠️  Converting Windows line endings to Unix format..."
+        sed -i 's/\r$//' "$CONTROL_FILE"
+    fi
+    
+    echo "   ✅ Control file format validated."
+}
+
+# --- Fix file ownership ---
+fix_ownership() {
+    local DIRNAME="$1"
+    local USE_ROOT_OWNER="$2"
+    
+    if [[ "$USE_ROOT_OWNER" == "true" ]]; then
+        if [[ $EUID -ne 0 ]]; then
+            echo "❌ Error: Root ownership requested but not running as root."
+            echo "   Please run with sudo or use --preserve-owner option."
+            exit 1
+        fi
+        echo "🔧 Setting root ownership for all files..."
+        chown -R root:root "$DIRNAME"
+        echo "   ✅ Files now owned by root:root"
+    else
+        echo "💡 Note: Files will maintain current ownership ($(id -un):$(id -gn))."
+        if [[ "$PRESERVE_OWNER" == "false" ]]; then
+            echo "   This will generate warnings but the package will work correctly."
+        fi
+    fi
+}
+
+# --- Repack command logic ---
+repack_package() {
+    if [[ -z "$ARGUMENT" ]]; then
+        echo "Error: Missing directory for --repack."
+        usage
+    fi
+
+    DIRNAME="$ARGUMENT"
+    USE_ROOT_OWNER="false"
+    PRESERVE_OWNER="false"
+
+    # Check for additional options in all remaining arguments
+    shift 2  # Skip script name and --repack
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --root-owner)
+                USE_ROOT_OWNER="true"
+                shift
+                ;;
+            --preserve-owner)
+                PRESERVE_OWNER="true"
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    if [[ ! -d "$DIRNAME" ]]; then
+        echo "Error: Directory '$DIRNAME' not found."
+        exit 1
+    fi
+
+    DEBIAN_DIR="$DIRNAME/DEBIAN"
+    if [[ ! -d "$DEBIAN_DIR" ]]; then
+        echo "Error: The directory '$DIRNAME' does not contain a 'DEBIAN' subdirectory."
+        exit 1
+    fi
+
+    validate_control_file "$DIRNAME"
+
+    echo "⚙️  Verifying and setting standard permissions..."
+    if [ -f "$DEBIAN_DIR/control" ]; then
+        chmod 644 "$DEBIAN_DIR/control"
+    fi
+    for SCRIPT in preinst postinst prerm postrm; do
+        if [ -f "$DEBIAN_DIR/$SCRIPT" ];
+        then
+            echo "  - Ensuring DEBIAN/$SCRIPT is executable."
+            chmod 755 "$DEBIAN_DIR/$SCRIPT"
+        fi
+    done
+
+    # Handle file ownership
+    fix_ownership "$DIRNAME" "$USE_ROOT_OWNER"
+
+    OUTPUT_DEB="${DIRNAME}.modified.deb"
+    if [[ -f "$OUTPUT_DEB" ]]; then
+        echo "Error: Output file '$OUTPUT_DEB' already exists."
+        exit 1
+    fi
+
+    echo "📦 Repacking contents of '$DIRNAME/' into '$OUTPUT_DEB'..."
+    
+    # Build the dpkg-deb command with appropriate options
+    DPKG_CMD="dpkg-deb --build"
+    
+    if [[ "$PRESERVE_OWNER" == "true" ]]; then
+        DPKG_CMD="$DPKG_CMD --root-owner-group"
+    fi
+    
+    eval $DPKG_CMD "$DIRNAME" "$OUTPUT_DEB"
+
+    if [[ $? -eq 0 ]]; then
+        echo "✅ Successfully repacked package to '$OUTPUT_DEB'."
+        if [[ "$USE_ROOT_OWNER" == "false" && "$PRESERVE_OWNER" == "false" ]]; then
+            echo ""
+            echo "💡 To suppress ownership warnings in the future, you can:"
+            echo "   1. Run: $0 --repack '$DIRNAME' --root-owner (requires sudo)"
+            echo "   2. Run: $0 --repack '$DIRNAME' --preserve-owner (uses --root-owner-group flag)"
+        fi
+    else
+        echo "❌ Error: Failed to build the package. Check logs above."
+    fi
+}
+
+# --- SCRIPT EXECUTION STARTS HERE ---
+
+check_dependencies
+
+# Store all arguments for passing to functions
+ALL_ARGS=("$@")
+
+case "$COMMAND" in
+    --unpack)
+        unpack_package
+        ;;
+    --repack)
+        # Pass all arguments to repack_package function
+        repack_package "${ALL_ARGS[@]}"
+        ;;
+    *)
+        usage
+        ;;
+esac
+
+exit 0
