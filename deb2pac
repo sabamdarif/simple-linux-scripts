@@ -1,0 +1,649 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import tarfile
+import gzip
+import subprocess
+import tempfile
+import shutil
+import hashlib
+import time
+from pathlib import Path
+import re
+
+class DebToPkgConverter:
+    def __init__(self):
+        self.temp_dir = None
+        self.deb_extract_dir = None
+        self.pkg_build_dir = None
+        self.verbose = False
+        
+    def create_temp_dirs(self):
+        """Create temporary directories for processing"""
+        self.temp_dir = tempfile.mkdtemp(prefix="deb2pkg_")
+        self.deb_extract_dir = os.path.join(self.temp_dir, "deb_extract")
+        self.pkg_build_dir = os.path.join(self.temp_dir, "pkg_build")
+        os.makedirs(self.deb_extract_dir, exist_ok=True)
+        os.makedirs(self.pkg_build_dir, exist_ok=True)
+        
+    def cleanup(self):
+        """Clean up temporary directories"""
+        if self.temp_dir and os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+    
+    def extract_deb(self, deb_file):
+        """Extract .deb file using ar and tar"""
+        if self.verbose:
+            print(f"Extracting {deb_file}...")
+        
+        # Change to extraction directory
+        original_cwd = os.getcwd()
+        os.chdir(self.deb_extract_dir)
+        
+        try:
+            # Use ar to extract .deb file
+            subprocess.run(['ar', 'x', deb_file], check=True)
+            
+            # Extract control.tar.* (contains metadata)
+            control_files = [f for f in os.listdir('.') if f.startswith('control.tar')]
+            if not control_files:
+                raise Exception("No control.tar.* found in .deb file")
+            
+            control_tar = control_files[0]
+            os.makedirs('DEBIAN', exist_ok=True)
+            
+            if control_tar.endswith('.gz'):
+                with gzip.open(control_tar, 'rb') as gz_file:
+                    with tarfile.open(fileobj=gz_file, mode='r|') as tar:
+                        tar.extractall('DEBIAN')
+            elif control_tar.endswith('.xz'):
+                subprocess.run(['tar', '-xf', control_tar, '-C', 'DEBIAN'], check=True)
+            elif control_tar.endswith('.zst'):
+                subprocess.run(['tar', '--use-compress-program=zstd', '-xf', control_tar, '-C', 'DEBIAN'], check=True)
+            else:
+                with tarfile.open(control_tar, 'r') as tar:
+                    tar.extractall('DEBIAN')
+            
+            # Extract data.tar.* (contains actual files)
+            data_files = [f for f in os.listdir('.') if f.startswith('data.tar')]
+            if data_files:
+                data_tar = data_files[0]
+                os.makedirs('data', exist_ok=True)
+                
+                if data_tar.endswith('.gz'):
+                    with gzip.open(data_tar, 'rb') as gz_file:
+                        with tarfile.open(fileobj=gz_file, mode='r|') as tar:
+                            tar.extractall('data')
+                elif data_tar.endswith('.xz'):
+                    subprocess.run(['tar', '-xf', data_tar, '-C', 'data'], check=True)
+                elif data_tar.endswith('.zst'):
+                    subprocess.run(['tar', '--use-compress-program=zstd', '-xf', data_tar, '-C', 'data'], check=True)
+                else:
+                    with tarfile.open(data_tar, 'r') as tar:
+                        tar.extractall('data')
+            
+        finally:
+            os.chdir(original_cwd)
+    
+    def parse_control_file(self):
+        """Parse the Debian control file"""
+        control_file = os.path.join(self.deb_extract_dir, 'DEBIAN', 'control')
+        if not os.path.exists(control_file):
+            raise Exception("Control file not found")
+        
+        control_data = {}
+        with open(control_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Parse control file fields
+        for line in content.split('\n'):
+            if ':' in line and not line.startswith(' '):
+                key, value = line.split(':', 1)
+                control_data[key.strip()] = value.strip()
+            elif line.startswith(' ') and 'Description' in control_data:
+                # Handle multi-line description
+                control_data['Description'] += '\n' + line
+        
+        return control_data
+    
+    def convert_dependencies(self, deb_deps):
+        """Convert Debian dependencies to Arch format"""
+        if not deb_deps:
+            return ""
+        
+        # Simple conversion - in practice, this would need a mapping table
+        # For Termux, many packages have different names
+        deps = []
+        for dep in deb_deps.split(','):
+            dep = dep.strip()
+            # Remove version constraints for now
+            dep = re.sub(r'\s*\([^)]*\)', '', dep)
+            dep = dep.strip()
+            if dep:
+                # Convert common Debian -> Arch package names
+                conversions = {
+                    'libc6': 'glibc',
+                    'libstdc++6': 'gcc-libs',
+                    'python3': 'python',
+                    'perl': 'perl',
+                    'bash': 'bash'
+                }
+                dep = conversions.get(dep, dep)
+                deps.append(dep)
+        
+        return deps
+    
+    def create_pkginfo(self, control_data):
+        """Create .PKGINFO file (Termux format)"""
+        pkginfo_path = os.path.join(self.pkg_build_dir, '.PKGINFO')
+        
+        # Get package size
+        data_dir = os.path.join(self.deb_extract_dir, 'data')
+        size = 0
+        if os.path.exists(data_dir):
+            for root, dirs, files in os.walk(data_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    if os.path.exists(file_path) and not os.path.islink(file_path):
+                        try:
+                            size += os.path.getsize(file_path)
+                        except OSError:
+                            pass
+        
+        # Convert dependencies
+        depends = self.convert_dependencies(control_data.get('Depends', ''))
+        
+        # Extract clean description (first line only)
+        description = control_data.get('Description', '').split('\n')[0].strip()
+        
+        with open(pkginfo_path, 'w') as f:
+            f.write(f"pkgname = {control_data.get('Package', 'unknown')}\n")
+            f.write(f"pkgbase = {control_data.get('Package', 'unknown')}\n")
+            f.write(f"pkgver = {control_data.get('Version', '1.0.0')}\n")
+            f.write(f"pkgdesc = {description}\n")
+            
+            # Add URL if available
+            if control_data.get('Homepage'):
+                f.write(f"url = {control_data['Homepage']}\n")
+            
+            f.write(f"builddate = {int(time.time())}\n")
+            f.write(f"packager = @termux\n")
+            f.write(f"size = {size}\n")
+            f.write(f"arch = {self.get_arch(control_data.get('Architecture', 'any'))}\n")
+            
+            # Add license if available (clean format)
+            license_info = control_data.get('License', '')
+            if not license_info:
+                # Try to extract from description or use a default
+                license_info = 'custom'
+            f.write(f"license = {license_info}\n")
+            
+            # Add dependencies (no version constraints)
+            for dep in depends:
+                f.write(f"depend = {dep}\n")
+            
+            # Add conflicts if any
+            conflicts = self.convert_dependencies(control_data.get('Conflicts', ''))
+            for conflict in conflicts:
+                f.write(f"conflict = {conflict}\n")
+            
+            # Add provides if any
+            provides = self.convert_dependencies(control_data.get('Provides', ''))
+            for provide in provides:
+                f.write(f"provides = {provide}\n")
+    
+    def get_arch(self, deb_arch):
+        """Convert Debian architecture to Arch architecture"""
+        arch_map = {
+            'amd64': 'x86_64',
+            'i386': 'i686',
+            'armhf': 'armv7h',
+            'arm64': 'aarch64',
+            'armel': 'arm',
+            'all': 'any'
+        }
+        return arch_map.get(deb_arch, deb_arch)
+    
+    def create_buildinfo(self, control_data):
+        """Create .BUILDINFO file (Termux format)"""
+        buildinfo_path = os.path.join(self.pkg_build_dir, '.BUILDINFO')
+        
+        with open(buildinfo_path, 'w') as f:
+            f.write(f"format = 2\n")
+            f.write(f"pkgname = {control_data.get('Package', 'unknown')}\n")
+            f.write(f"pkgbase = {control_data.get('Package', 'unknown')}\n")
+            f.write(f"pkgver = {control_data.get('Version', '1.0.0')}\n")
+            f.write(f"pkgarch = {self.get_arch(control_data.get('Architecture', 'any'))}\n")
+            # Remove SHA256 sum as Termux doesn't include it
+            f.write(f"packager = @termux\n")
+            f.write(f"builddate = {int(time.time())}\n")
+            f.write(f"buildtool = deb2pkg\n")
+            f.write(f"buildtoolver = 1.0.0\n")
+            f.write(f"buildenv = !distcc\n")
+            f.write(f"buildenv = !ccache\n")
+    
+    def create_mtree(self):
+        """Create .MTREE file (gzip compressed)"""
+        mtree_path = os.path.join(self.pkg_build_dir, '.MTREE')
+        data_dir = os.path.join(self.deb_extract_dir, 'data')
+        
+        # Create mtree content first
+        mtree_content = []
+        mtree_content.append("#mtree\n")
+        mtree_content.append("/set type=file uid=0 gid=0 mode=644\n")
+        
+        if not os.path.exists(data_dir):
+            # Create empty .MTREE for packages with no files
+            with gzip.open(mtree_path, 'wt', encoding='utf-8') as f:
+                f.writelines(mtree_content)
+            return
+        
+        # Walk through data directory and create mtree entries
+        for root, dirs, files in os.walk(data_dir):
+            for item in sorted(dirs + files):
+                item_path = os.path.join(root, item)
+                rel_path = os.path.relpath(item_path, data_dir)
+                
+                if rel_path.startswith('./'):
+                    rel_path = rel_path[2:]
+                
+                # Skip if file doesn't exist (broken symlinks, etc.)
+                if not os.path.exists(item_path) and not os.path.islink(item_path):
+                    print(f"Warning: Skipping non-existent file: {rel_path}")
+                    continue
+                
+                try:
+                    if os.path.isfile(item_path) or (os.path.islink(item_path) and os.path.isfile(item_path)):
+                        stat = os.lstat(item_path)  # Use lstat for symlinks
+                        size = stat.st_size if not os.path.islink(item_path) else 0
+                        mode = oct(stat.st_mode)[-3:]
+                        
+                        if os.path.islink(item_path):
+                            # Handle symbolic links
+                            link_target = os.readlink(item_path)
+                            mtree_content.append(f"./{rel_path} time={int(stat.st_mtime)} mode={mode} "
+                                                 f"type=link link={link_target}\n")
+                        else:
+                            # Calculate SHA256 for regular files
+                            try:
+                                sha256 = hashlib.sha256()
+                                with open(item_path, 'rb') as file:
+                                    sha256.update(file.read())
+                                sha256_hash = sha256.hexdigest()
+                                
+                                mtree_content.append(f"./{rel_path} time={int(stat.st_mtime)} mode={mode} "
+                                                     f"size={size} sha256digest={sha256_hash} type=file\n")
+                            except (IOError, OSError) as e:
+                                print(f"Warning: Could not hash file {rel_path}: {e}")
+                                mtree_content.append(f"./{rel_path} time={int(stat.st_mtime)} mode={mode} "
+                                                     f"size={size} type=file\n")
+                    
+                    elif os.path.isdir(item_path):
+                        stat = os.lstat(item_path)
+                        mode = oct(stat.st_mode)[-3:]
+                        mtree_content.append(f"./{rel_path} time={int(stat.st_mtime)} mode={mode} type=dir\n")
+                
+                except (OSError, IOError) as e:
+                    print(f"Warning: Could not process {rel_path}: {e}")
+                    continue
+        
+        # Add metadata files to mtree content
+        metadata_files = ['.BUILDINFO', '.PKGINFO', '.INSTALL']
+        for meta_file in metadata_files:
+            meta_path = os.path.join(self.pkg_build_dir, meta_file)
+            if os.path.exists(meta_path):
+                try:
+                    stat = os.stat(meta_path)
+                    size = stat.st_size
+                    mode = oct(stat.st_mode)[-3:]
+                    
+                    # Calculate SHA256 for metadata files
+                    sha256 = hashlib.sha256()
+                    with open(meta_path, 'rb') as file:
+                        sha256.update(file.read())
+                    sha256_hash = sha256.hexdigest()
+                    
+                    mtree_content.append(f"./{meta_file} time={int(stat.st_mtime)} mode={mode} "
+                                         f"size={size} sha256digest={sha256_hash} type=file\n")
+                except (IOError, OSError) as e:
+                    print(f"Warning: Could not process metadata file {meta_file}: {e}")
+        
+        # Add .MTREE itself (self-reference with dummy values since we're creating it)
+        # Use current time and estimate size
+        current_time = int(time.time())
+        estimated_size = len(''.join(mtree_content)) + 50  # Rough estimate
+        mtree_content.append(f"./.MTREE time={current_time} mode=644 "
+                             f"size={estimated_size} sha256digest=PLACEHOLDER type=file\n")
+        
+        # Write gzip compressed .MTREE file
+        with gzip.open(mtree_path, 'wt', encoding='utf-8') as f:
+            f.writelines(mtree_content)
+        
+        # Now update the .MTREE file with its actual SHA256 and size
+        actual_stat = os.stat(mtree_path)
+        actual_size = actual_stat.st_size
+        
+        # Calculate actual SHA256 of the compressed .MTREE file
+        sha256 = hashlib.sha256()
+        with open(mtree_path, 'rb') as f:
+            sha256.update(f.read())
+        actual_sha256 = sha256.hexdigest()
+        
+        # Read the content back, replace the placeholder, and rewrite
+        with gzip.open(mtree_path, 'rt', encoding='utf-8') as f:
+            final_content = f.read()
+        
+        final_content = final_content.replace(
+            f"./.MTREE time={current_time} mode=644 size={estimated_size} sha256digest=PLACEHOLDER type=file",
+            f"./.MTREE time={int(actual_stat.st_mtime)} mode=644 size={actual_size} sha256digest={actual_sha256} type=file"
+        )
+        
+        # Write the final version
+        with gzip.open(mtree_path, 'wt', encoding='utf-8') as f:
+            f.write(final_content)
+    
+    def copy_data_files(self):
+        """Copy data files to package build directory"""
+        data_dir = os.path.join(self.deb_extract_dir, 'data')
+        if os.path.exists(data_dir):
+            try:
+                # Use shutil.copytree with ignore_errors and custom error handling
+                def copy_with_error_handling(src, dst):
+                    try:
+                        if os.path.islink(src):
+                            # Handle symbolic links
+                            link_target = os.readlink(src)
+                            os.makedirs(os.path.dirname(dst), exist_ok=True)
+                            os.symlink(link_target, dst)
+                        elif os.path.isdir(src):
+                            os.makedirs(dst, exist_ok=True)
+                            for item in os.listdir(src):
+                                copy_with_error_handling(
+                                    os.path.join(src, item),
+                                    os.path.join(dst, item)
+                                )
+                        elif os.path.isfile(src):
+                            os.makedirs(os.path.dirname(dst), exist_ok=True)
+                            shutil.copy2(src, dst)
+                    except (OSError, IOError) as e:
+                        print(f"Warning: Could not copy {src}: {e}")
+                        # Continue with other files
+                        pass
+                
+                for item in os.listdir(data_dir):
+                    src = os.path.join(data_dir, item)
+                    dst = os.path.join(self.pkg_build_dir, item)
+                    copy_with_error_handling(src, dst)
+                    
+            except Exception as e:
+                print(f"Warning: Error copying data files: {e}")
+                # Try alternative method
+                try:
+                    shutil.copytree(data_dir, self.pkg_build_dir, dirs_exist_ok=True, 
+                                    ignore_dangling_symlinks=True)
+                except Exception as e2:
+                    print(f"Warning: Fallback copy also failed: {e2}")
+    
+    def copy_install_scripts(self):
+        """Copy installation scripts if they exist"""
+        debian_dir = os.path.join(self.deb_extract_dir, 'DEBIAN')
+        
+        # Map Debian scripts to Arch scripts
+        script_map = {
+            'preinst': '.INSTALL',
+            'postinst': '.INSTALL',
+            'prerm': '.INSTALL',
+            'postrm': '.INSTALL'
+        }
+        
+        install_script_content = []
+        
+        for deb_script, arch_script in script_map.items():
+            script_path = os.path.join(debian_dir, deb_script)
+            if os.path.exists(script_path):
+                with open(script_path, 'r') as f:
+                    content = f.read()
+                
+                # Convert to Arch install script format
+                if deb_script == 'preinst':
+                    install_script_content.append("pre_install() {")
+                    install_script_content.append(content)
+                    install_script_content.append("}")
+                elif deb_script == 'postinst':
+                    install_script_content.append("post_install() {")
+                    install_script_content.append(content)
+                    install_script_content.append("}")
+                elif deb_script == 'prerm':
+                    install_script_content.append("pre_remove() {")
+                    install_script_content.append(content)
+                    install_script_content.append("}")
+                elif deb_script == 'postrm':
+                    install_script_content.append("post_remove() {")
+                    install_script_content.append(content)
+                    install_script_content.append("}")
+        
+        if install_script_content:
+            install_path = os.path.join(self.pkg_build_dir, '.INSTALL')
+            with open(install_path, 'w') as f:
+                f.write('\n'.join(install_script_content))
+    
+    def create_pkg_archive(self, output_path, control_data):
+        """Create the final .pkg.tar.xz archive"""
+        package_name = control_data.get('Package', 'unknown')
+        version = control_data.get('Version', '1.0.0')
+        arch = self.get_arch(control_data.get('Architecture', 'any'))
+        
+        if not output_path:
+            output_path = f"{package_name}-{version}-{arch}.pkg.tar.xz"
+        
+        if self.verbose:
+            print(f"Creating package archive: {output_path}")
+        
+        # Change to build directory
+        original_cwd = os.getcwd()
+        os.chdir(self.pkg_build_dir)
+        
+        try:
+            # Create tar.xz archive
+            cmd = ['tar', '-cJf', os.path.join(original_cwd, output_path), '.']
+            subprocess.run(cmd, check=True)
+            if self.verbose:
+                print(f"Package created successfully: {output_path}")
+            
+        finally:
+            os.chdir(original_cwd)
+    
+    def convert(self, deb_file, output_path=None):
+        """Main conversion function"""
+        try:
+            self.create_temp_dirs()
+            
+            # Extract .deb file
+            self.extract_deb(os.path.abspath(deb_file))
+            
+            # Parse control file
+            control_data = self.parse_control_file()
+            if self.verbose:
+                print(f"Converting package: {control_data.get('Package', 'unknown')}")
+            
+            # Create package files
+            self.create_pkginfo(control_data)
+            self.create_buildinfo(control_data)
+            self.copy_install_scripts() # Copy scripts before mtree to include .INSTALL
+            self.create_mtree()
+            
+            # Copy data files
+            self.copy_data_files()
+            
+            # Create final package
+            self.create_pkg_archive(output_path, control_data)
+            
+        except Exception as e:
+            print(f"Error during conversion: {e}")
+            sys.exit(1)
+        finally:
+            self.cleanup()
+
+def main():
+    import argparse
+    import glob
+    
+    parser = argparse.ArgumentParser(
+        description='Convert Debian .deb packages to Arch Linux .pkg.tar.xz packages',
+        epilog='''Examples:
+  %(prog)s package.deb                # Convert single package
+  %(prog)s *.deb                     # Convert all .deb files in current directory
+  %(prog)s -o /output/dir/ *.deb      # Convert with custom output directory
+  %(prog)s -r /path/to/debs/          # Convert all .deb files in directory recursively
+        ''',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    parser.add_argument('input', nargs='*', 
+                        help='Input .deb file(s) or directory. Supports wildcards (*.deb)')
+    parser.add_argument('-o', '--output', 
+                        help='Output directory for generated .pkg.tar.xz files')
+    parser.add_argument('-r', '--recursive', action='store_true',
+                        help='Recursively search for .deb files in directories')
+    parser.add_argument('-f', '--force', action='store_true',
+                        help='Overwrite existing output files')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='Verbose output')
+    parser.add_argument('-q', '--quiet', action='store_true',
+                        help='Quiet mode (only show errors)')
+    
+    args = parser.parse_args()
+    
+    if not args.input:
+        parser.print_help()
+        sys.exit(1)
+    
+    # Collect all .deb files
+    deb_files = []
+    for input_item in args.input:
+        if os.path.isfile(input_item) and input_item.endswith('.deb'):
+            deb_files.append(input_item)
+        elif os.path.isdir(input_item):
+            if args.recursive:
+                # Recursively find .deb files
+                pattern = os.path.join(input_item, '**', '*.deb')
+                deb_files.extend(glob.glob(pattern, recursive=True))
+            else:
+                # Only in the specified directory
+                pattern = os.path.join(input_item, '*.deb')
+                deb_files.extend(glob.glob(pattern))
+        else:
+            # Handle wildcards
+            expanded = glob.glob(input_item)
+            deb_files.extend([f for f in expanded if f.endswith('.deb')])
+    
+    if not deb_files:
+        print("Error: No .deb files found")
+        sys.exit(1)
+    
+    # Remove duplicates and sort
+    deb_files = sorted(list(set(deb_files)))
+    
+    if not args.quiet:
+        print(f"Found {len(deb_files)} .deb file(s) to convert")
+    
+    # Check for required tools
+    required_tools = ['ar', 'tar', 'zstd']
+    for tool in required_tools:
+        if shutil.which(tool) is None:
+            print(f"Error: Required tool '{tool}' not found in PATH.")
+            if tool == 'zstd':
+                print("       On Debian/Ubuntu, run: sudo apt-get install zstd")
+                print("       On Arch Linux, run: sudo pacman -S zstd")
+            sys.exit(1)
+    
+    # Create output directory if specified
+    output_dir = args.output
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        if not os.path.isdir(output_dir):
+            print(f"Error: Cannot create output directory: {output_dir}")
+            sys.exit(1)
+    
+    # Convert each file
+    converter = DebToPkgConverter()
+    converted = 0
+    failed = 0
+    
+    for i, deb_file in enumerate(deb_files, 1):
+        try:
+            if not args.quiet:
+                print(f"\n[{i}/{len(deb_files)}] Processing: {os.path.basename(deb_file)}")
+            
+            # Generate output filename
+            # This is a simplification; a better approach would be to parse the package name and version first
+            # For now, we derive it from the deb filename and update it later.
+            temp_control = DebToPkgConverter()
+            try:
+                temp_control.create_temp_dirs()
+                temp_control.extract_deb(os.path.abspath(deb_file))
+                control_data = temp_control.parse_control_file()
+                package_name = control_data.get('Package', 'unknown')
+                version = control_data.get('Version', '1.0.0')
+                arch = temp_control.get_arch(control_data.get('Architecture', 'any'))
+                base_name = f"{package_name}-{version}-{arch}"
+            except Exception:
+                 base_name = os.path.splitext(os.path.splitext(os.path.basename(deb_file))[0])[0]
+            finally:
+                 temp_control.cleanup()
+
+            if output_dir:
+                output_path = os.path.join(output_dir, f"{base_name}.pkg.tar.xz")
+            else:
+                output_path = f"{base_name}.pkg.tar.xz"
+            
+            # Check if output exists and handle force flag
+            if os.path.exists(output_path) and not args.force:
+                print(f"Warning: Output file exists, skipping: {output_path}")
+                print("         Use -f/--force to overwrite existing files")
+                failed += 1 # Count as skipped/failed
+                continue
+            
+            # Set verbosity for converter
+            if args.verbose:
+                converter.verbose = True
+            elif args.quiet:
+                converter.verbose = False
+            else:
+                converter.verbose = False  # Default
+            
+            # Convert the file
+            converter.convert(os.path.abspath(deb_file), output_path)
+            converted += 1
+            
+            if not args.quiet:
+                print(f"✓ Successfully converted: {output_path}")
+                
+        except KeyboardInterrupt:
+            print("\nConversion interrupted by user")
+            sys.exit(1)
+        except Exception as e:
+            print(f"✗ Error converting {deb_file}: {e}")
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
+            failed += 1
+            continue
+    
+    # Summary
+    if not args.quiet:
+        print(f"\n" + "="*50)
+        print(f"Conversion Summary:")
+        print(f"  Total files: {len(deb_files)}")
+        print(f"  Converted:   {converted}")
+        print(f"  Failed/Skipped: {failed}")
+        
+        if failed > 0 and not args.verbose:
+            print(f"\nUse -v/--verbose to see detailed error information for failed items.")
+    
+    # Exit with appropriate code
+    sys.exit(0 if failed == 0 else 1)
+
+if __name__ == "__main__":
+    main()
