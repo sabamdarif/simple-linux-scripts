@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# Check if commit hash is provided
+if [ $# -ne 1 ]; then
+    echo "Usage: save-patch COMMIT_HASH"
+    echo "Example: savepatch 43184d474a753ede9c2ccecb1396e24604bd613e"
+    exit 1
+fi
+
+COMMIT="$1"
+
+# Validate that we're in a git repository
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+    echo "Error: Not in a git repository"
+    exit 1
+fi
+
+# Validate commit exists
+if ! git rev-parse --verify "$COMMIT" > /dev/null 2>&1; then
+    echo "Error: Commit '$COMMIT' not found"
+    exit 1
+fi
+
+# Create patches directory if it doesn't exist
+mkdir -p patches
+
+# Find the highest numbered patch file
+highest_num=0
+if ls patches/*.patch > /dev/null 2>&1; then
+    for patch_file in patches/*.patch; do
+        # Extract number from filename (assuming format NNNN-*.patch)
+        filename=$(basename "$patch_file")
+        if [[ $filename =~ ^([0-9]{4})- ]]; then
+            num=${BASH_REMATCH[1]}
+            # Remove leading zeros for comparison
+            num=$((10#$num))
+            if [ $num -gt $highest_num ]; then
+                highest_num=$num
+            fi
+        fi
+    done
+fi
+
+# Next number is highest + 1
+next_num=$((highest_num + 1))
+
+# Get commit subject line and make it filename-safe
+subject=$(git log -1 --pretty=format:%s "$COMMIT" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')
+
+# Remove trailing dashes
+subject=$(echo "$subject" | sed 's/-*$//')
+
+# Format number prefix (4 digits with leading zeros)
+num_prefix=$(printf "%04d" "$next_num")
+
+# Generate patch filename
+patch_filename="patches/${num_prefix}-${subject}.patch"
+
+# Create the patch file
+git diff "${COMMIT}^!" > "$patch_filename"
+
+echo "Saved $patch_filename"
