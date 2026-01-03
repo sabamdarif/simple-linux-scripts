@@ -1,0 +1,2241 @@
+#!/bin/env python3
+
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
+VERSION = "1.1"
+
+CONFIG_DIR = Path.home() / ".config" / "sysconfig"
+PACKAGES_CONFIG = CONFIG_DIR / "packages.conf"
+FLATPAKS_CONFIG = CONFIG_DIR / "flatpaks.conf"
+EXTENSIONS_CONFIG = CONFIG_DIR / "gnome-extensions.conf"
+REPOS_CONFIG = CONFIG_DIR / "repos.conf"
+SERVICES_CONFIG = CONFIG_DIR / "services.conf"
+FIREWALL_CONFIG = CONFIG_DIR / "firewall.conf"
+PYTHON_CONFIG = CONFIG_DIR / "python-packages.conf"
+NODE_CONFIG = CONFIG_DIR / "node-packages.conf"
+CARGO_CONFIG = CONFIG_DIR / "cargo-packages.conf"
+GROUPS_CONFIG = CONFIG_DIR / "groups.conf"
+CONTAINERS_CONFIG = CONFIG_DIR / "containers.conf"
+CUSTOM_COMMANDS_CONFIG = CONFIG_DIR / "custom-commands.sh"
+DCONF_BACKUP = CONFIG_DIR / "dconf-settings.ini"
+
+# fetch whch distro i am using
+os_release_path = Path("/") / "etc" / "os-release"
+if os_release_path.exists():
+    os_release = subprocess.run(
+        ["bash", "-c", "source /etc/os-release && echo $ID"],
+        capture_output=True,
+        text=True,
+    )
+    DISTRO = os_release.stdout.strip()
+else:
+    print(f"[ERROR]: {os_release_path} doesn't exists")
+    sys.exit(1)
+
+# set which packahe manager to use
+PKG_MANAGERS = {
+    "fedora": "dnf",
+    "ubuntu": "apt",
+    "debian": "apt",
+}
+
+PKG_MANAGER = PKG_MANAGERS.get(DISTRO, "unknown")
+
+if PKG_MANAGER == "unknown":
+    sys.exit(f"Unsupported distro: {DISTRO}")
+
+# fetch which desktop environment i am using
+desktop = os.environ.get("XDG_CURRENT_DESKTOP")
+
+if not desktop:
+    sys.exit("[ERROR]: XDG_CURRENT_DESKTOP is not set")
+
+DESKTOP = desktop.lower()
+
+
+def init_config():
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    config_files = {
+        PACKAGES_CONFIG: """# System packages to install (one per line)
+# Lines starting with # are comments
+# Example:
+# vim
+# git
+# htop
+            """,
+        FLATPAKS_CONFIG: """# Flatpak applications to install (one per line)
+# Use full application ID
+# Example:
+# org.mozilla.firefox
+# com.spotify.Client
+
+""",
+        EXTENSIONS_CONFIG: """# GNOME extensions to install (UUID@domain format)
+# Example:
+# dash-to-dock@micxgx.gmail.com
+# appindicatorsupport@rgcjonas.gmail.com
+
+""",
+        REPOS_CONFIG: """# Repositories configuration
+# Format: TYPE:REPO_IDENTIFIER
+# 
+# For Fedora Copr repos use:
+#   copr:USER/PROJECT
+# 
+# For Fedora third-party repos use:
+#   fedora-third-party:REPO_NAME
+#
+# For RPM Fusion (Fedora):
+#   rpmfusion:free
+#   rpmfusion:nonfree
+#
+# Examples:
+# copr:phracek/PyCharm
+# rpmfusion:free
+# rpmfusion:nonfree
+
+""",
+        SERVICES_CONFIG: """# Systemd services configuration
+# Format: SERVICE_NAME:TYPE:STATE
+# TYPE: system or user
+# STATE: enabled or disabled
+#
+# Examples:
+# docker.service:system:enabled
+# sshd.service:system:enabled
+# ssh-agent.service:user:enabled
+# bluetooth.service:system:disabled
+
+""",
+        FIREWALL_CONFIG: """# Firewall configuration
+# Format depends on firewall type
+#
+# For firewalld (Fedora):
+#   service:SERVICE_NAME
+#   port:PORT/PROTOCOL
+#   zone:ZONE_NAME
+#
+# For ufw (Ubuntu/Debian):
+#   allow:PORT/PROTOCOL
+#   deny:PORT/PROTOCOL
+#   rule:RULE_TEXT
+#
+# Examples:
+# service:ssh
+# service:http
+# port:8080/tcp
+# allow:22/tcp
+
+""",
+        PYTHON_CONFIG: """# Python packages to install globally (pip)
+# One package per line
+# Use exact package names from PyPI
+#
+# Examples:
+# requests
+# numpy
+# pandas
+# black
+# pylint
+
+""",
+        NODE_CONFIG: """# Node.js global packages to install (npm)
+# One package per line
+#
+# Examples:
+# typescript
+# eslint
+# prettier
+# yarn
+# pm2
+
+""",
+        CARGO_CONFIG: """# Rust packages to install (cargo)
+# One package per line
+#
+# Examples:
+# ripgrep
+# fd-find
+# bat
+# exa
+# tokei
+
+""",
+        GROUPS_CONFIG: """# User groups configuration
+# List groups the current user should belong to
+# One group per line
+#
+# Examples:
+# docker
+# libvirt
+# wheel
+# audio
+# video
+
+""",
+        CONTAINERS_CONFIG: """# Container/VM configuration
+# Format: TYPE:IDENTIFIER:OPTIONS
+#
+# For Docker images:
+#   docker-image:IMAGE_NAME
+#   docker-image:IMAGE_NAME:TAG
+#
+# For Docker containers to run:
+#   docker-run:CONTAINER_NAME:IMAGE:PORTS:VOLUMES
+#
+# For Podman (similar to Docker):
+#   podman-image:IMAGE_NAME
+#   podman-run:CONTAINER_NAME:IMAGE:PORTS:VOLUMES
+#
+# Examples:
+# docker-image:postgres:latest
+# docker-image:redis
+# docker-run:postgres-dev:postgres:5432:5432:/var/lib/postgresql/data
+# podman-image:nginx:alpine
+
+""",
+        CUSTOM_COMMANDS_CONFIG: """#!/usr/bin/env bash
+# Custom commands to run during system restore
+# These commands will be executed after system update but before package installation
+# 
+# Examples:
+# echo "Running custom setup..."
+# mkdir -p ~/.local/bin
+# curl -o ~/.local/bin/some-tool https://example.com/tool
+# chmod +x ~/.local/bin/some-tool
+
+# Add your custom commands below:
+
+""",
+    }
+    for config_path, default_content in config_files.items():
+        if not config_path.exists():
+            config_path.write_text(default_content)
+
+    if CUSTOM_COMMANDS_CONFIG.exists():
+        CUSTOM_COMMANDS_CONFIG.chmod(0o755)
+
+    print(f"Configuration initialized at {CONFIG_DIR}")
+
+
+def read_config(config_file):
+    config_path = Path(config_file)
+
+    if not config_path.exists():
+        return []
+
+    valid_lines = []
+
+    with open(config_path, "r") as f:
+        for line in f:
+            line = line.strip()
+
+            if not line:
+                continue
+            if line.startswith("#"):
+                continue
+
+            valid_lines.append(line)
+
+    return valid_lines
+
+
+def list_installed_packages():
+    try:
+        if PKG_MANAGER == "dnf":  # Fixed: was PKG_MANAGERS
+            result = subprocess.run(
+                ["rpm", "-qa", "--queryformat", "%{NAME}\n"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            packages = result.stdout.strip().split("\n")
+            packages = sorted(set(pkg for pkg in packages if pkg))
+            return packages
+        elif PKG_MANAGER == "apt":  # Fixed: was PKG_MANAGERS
+            result = subprocess.run(
+                ["dpkg-query", "-W", "-f=${Package}\n"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            packages = result.stdout.strip().split("\n")
+            packages = sorted(set(pkg for pkg in packages if pkg))
+            return packages
+        else:
+            print("[ERROR]: unsupported package manager")
+            return []
+    except FileNotFoundError:
+        print(f"[ERROR]: Command not found for {PKG_MANAGER}", file=sys.stderr)
+        return []
+    except Exception as e:
+        print(f"[ERROR]: Error listing packages: {e}", file=sys.stderr)
+        return []
+
+
+def list_installed_flatpaks():
+    try:
+        result = subprocess.run(
+            ["flatpak", "list", "--app", "--columns=application"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        packages = result.stdout.strip().split("\n")
+        packages = sorted(set(pkg for pkg in packages if pkg))
+        return packages
+    except Exception as e:
+        print(f"[ERROR]: Error listing packages: {e}", file=sys.stderr)
+        return []
+
+
+def list_installed_extensions():
+    if not shutil.which("gnome-extensions"):
+        return []
+
+    try:
+        result = subprocess.run(
+            ["gnome-extensions", "list"], capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0:
+            extensions = result.stdout.strip().split("\n")
+            return [ext for ext in extensions if ext]
+        return []
+    except Exception:
+        return []
+
+
+def list_enabled_repos():
+    if DISTRO != "fedora":
+        print("Repository backup only supported on Fedora", file=sys.stderr)
+        return []
+
+    repos = []
+
+    # List Copr repos
+    repos_dir = Path("/etc/yum.repos.d")
+    if repos_dir.exists():
+        for repo_file in repos_dir.glob("_copr:*.repo"):
+            repo_name = repo_file.stem
+            repo_name = repo_name.replace("_copr:", "")
+            repo_name = repo_name.replace(":", "")
+            repos.append(f"copr:{repo_name}")
+
+    # Check for RPM Fusion
+    try:
+        result = subprocess.run(
+            ["dnf", "repolist", "enabled"], capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0:
+            output = result.stdout
+            if "rpmfusion-free" in output:
+                repos.append("rpmfusion:free")
+            if "rpmfusion-nonfree" in output:
+                repos.append("rpmfusion:nonfree")
+
+            # List other third-party repos
+            for line in output.split("\n")[1:]:
+                parts = line.split()
+                if parts:
+                    repo = parts[0]
+                    if not any(
+                        x in repo
+                        for x in ["copr", "rpmfusion", "fedora", "updates", "rawhide"]
+                    ):
+                        repos.append(f"fedora-third-party:{repo}")
+    except Exception:
+        pass
+
+    return repos
+
+
+def list_enabled_services():
+    services = []
+
+    # System services
+    try:
+        result = subprocess.run(
+            [
+                "systemctl",
+                "list-unit-files",
+                "--type=service",
+                "--state=enabled",
+                "--no-pager",
+                "--no-legend",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                parts = line.split()
+                if parts:
+                    services.append(f"{parts[0]}:system:enabled")
+    except Exception:
+        pass
+
+    # User services
+    try:
+        result = subprocess.run(
+            [
+                "systemctl",
+                "--user",
+                "list-unit-files",
+                "--type=service",
+                "--state=enabled",
+                "--no-pager",
+                "--no-legend",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                parts = line.split()
+                if parts:
+                    services.append(f"{parts[0]}:user:enabled")
+    except Exception:
+        pass
+
+    return sorted(set(services))
+
+
+def list_user_groups():
+    try:
+        import pwd
+
+        username = pwd.getpwuid(os.getuid()).pw_name
+        result = subprocess.run(
+            ["groups", username], capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0:
+            groups_output = result.stdout.strip()
+            groups_list = groups_output.split()
+            if len(groups_list) > 1:
+                return sorted(groups_list[1:])
+        return []
+    except Exception:
+        return []
+
+
+def list_python_packages():
+    pip_cmd = None
+    if shutil.which("pip3"):
+        pip_cmd = "pip3"
+    elif shutil.which("pip"):
+        pip_cmd = "pip"
+
+    if not pip_cmd:
+        return []
+
+    try:
+        result = subprocess.run(
+            [pip_cmd, "list", "--user", "--format=freeze"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            packages = []
+            for line in result.stdout.strip().split("\n"):
+                if line and "==" in line:
+                    package_name = line.split("==")[0]
+                    packages.append(package_name)
+            return packages
+        return []
+    except Exception:
+        return []
+
+
+def list_node_packages():
+    if not shutil.which("npm"):
+        return []
+
+    try:
+        result = subprocess.run(
+            ["npm", "list", "-g", "--depth=0", "--parseable"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            packages = []
+            lines = result.stdout.strip().split("\n")
+            for line in lines[1:]:
+                if line:
+                    package_name = Path(line).name
+                    packages.append(package_name)
+            return packages
+        return []
+    except Exception:
+        return []
+
+
+def list_cargo_packages():
+    if not shutil.which("cargo"):
+        return []
+
+    try:
+        result = subprocess.run(
+            ["cargo", "install", "--list"], capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0:
+            packages = []
+            for line in result.stdout.strip().split("\n"):
+                if line and not line.startswith(" "):
+                    package_name = line.split()[0]
+                    packages.append(package_name)
+            return sorted(set(packages))
+        return []
+    except Exception:
+        return []
+
+
+def backup_firewall():
+    print("[INFO]: Backing up firewall configuration...")
+    with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp_file:
+        temp_file_path = temp_file.name
+
+        temp_file.write(
+            f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        )
+        temp_file.write("# Firewall configuration\n")
+        temp_file.write("\n")
+
+        if shutil.which("firewall-cmd"):
+            temp_file.write("# Detected: firewalld\n")
+            try:
+                result = subprocess.run(
+                    ["firewall-cmd", "--get-default-zone"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                default_zone = (
+                    result.stdout.strip() if result.returncode == 0 else "public"
+                )
+                temp_file.write(f"zone:{default_zone}\n")
+
+            except Exception:
+                # If there's any error, use "public" as default
+                temp_file.write("zone:public\n")
+
+            try:
+                result = subprocess.run(
+                    ["firewall-cmd", "--list-services"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    # Split the output by spaces to get individual services
+                    services = result.stdout.strip().split()
+                    # Write each service on its own line
+                    for svc in services:
+                        if svc:  # Only write non-empty services
+                            temp_file.write(f"service:{svc}\n")
+            except Exception as e:
+                print(
+                    f"Warning: Could not list firewall services: {e}", file=sys.stderr
+                )
+
+            # List all ports in the firewall
+            try:
+                result = subprocess.run(
+                    ["firewall-cmd", "--list-ports"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    ports = result.stdout.strip().split()
+                    for port in ports:
+                        if port:
+                            temp_file.write(f"port:{port}\n")
+            except Exception as e:
+                print(f"Warning: Could not list firewall ports: {e}", file=sys.stderr)
+
+        elif shutil.which("ufw") is not None:
+            temp_file.write("# Detected: ufw\n")
+
+            try:
+                result = subprocess.run(
+                    ["sudo", "ufw", "status", "numbered"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.split("\n"):
+                        # Example: "[ 1] 22/tcp    ALLOW IN    Anywhere"
+                        if line.strip().startswith("["):
+                            # Remove the number part [1], [2], etc.
+                            # Find the ] bracket and take everything after it
+                            if "]" in line:
+                                rule = line.split("]", 1)[1].strip()
+                                if rule:
+                                    temp_file.write(f"rule:{rule}\n")
+            except Exception as e:
+                print(f"Warning: Could not get ufw status: {e}", file=sys.stderr)
+
+        else:
+            # No supported firewall found
+            temp_file.write("# No supported firewall found\n")
+
+    shutil.move(temp_file_path, FIREWALL_CONFIG)
+    print("[INFO]: Firewall config backed up to {FIREWALL_CONFIG}")
+
+
+def backup_repos():
+    if DISTRO != "fedora":
+        print("[ERROR]: Repository backup only supported on Fedora")
+        sys.exit(1)
+
+    print("[INFO]: Backing up repository configuration...")
+    with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp_repos:
+        temp_repos_path = temp_repos.name
+        temp_repos.write(
+            f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        )
+        temp_repos.write("# Repository configuration")
+        temp_repos.write("\n")
+
+        try:
+            enabled_repos = list_enabled_repos()
+
+            for repo in enabled_repos:
+                temp_repos.write(f"{repo}\n")
+
+        except Exception as e:
+            print(f"[ERROR]: Could not retrieve some repos: {e}")
+            temp_repos.write(f"# Warning: Could not retrieve some repos: {e}\n")
+
+    shutil.move(temp_repos_path, REPOS_CONFIG)
+    print(f"[INFO]: Repositories backed up to {REPOS_CONFIG}")
+
+
+def install_repo(repo_line):
+    # Split the line into type and identifier
+    # Example: "copr:phracek/PyCharm" becomes type="copr", id="phracek/PyCharm"
+    # In bash this is done with: ${repo_line%%:*} and ${repo_line#*:}
+    if ":" not in repo_line:
+        print(f"  Invalid repository format: {repo_line}")
+        return
+
+    # Split at the first colon
+    # split(':', 1) means "split only at the first colon"
+    # This handles cases where the identifier might contain colons
+    repo_type, repo_id = repo_line.split(":", 1)
+
+    if repo_type == "copr":
+        print(f"  Enabling Copr repo: {repo_id}")
+        try:
+            subprocess.run(
+                ["sudo", "dnf", "copr", "enable", "-y", repo_id],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            print(f"    Failed to enable {repo_id}")
+        except Exception as e:
+            print(f"    Error enabling {repo_id}: {e}")
+
+    elif repo_type == "rpmfusion":
+        print(f"  Enabling RPM Fusion: {repo_id}")
+
+        try:
+            result = subprocess.run(
+                ["rpm", "-E", "%fedora"], capture_output=True, text=True, check=True
+            )
+            fedora_version = result.stdout.strip()
+        except Exception:
+            print("    Failed to detect Fedora version")
+            return
+
+        if repo_id == "free":
+            rpm_url = f"https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-{fedora_version}.noarch.rpm"
+        elif repo_id == "nonfree":
+            rpm_url = f"https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-{fedora_version}.noarch.rpm"
+        else:
+            print(f"    Unknown RPM Fusion type: {repo_id}")
+            return
+
+        try:
+            subprocess.run(
+                ["sudo", "dnf", "install", "-y", rpm_url],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            print(f"    Failed to enable RPM Fusion {repo_id}")
+        except Exception as e:
+            print(f"    Error enabling RPM Fusion {repo_id}: {e}")
+
+    elif repo_type == "fedora-third-party":
+        print(f"  Enabling third-party repo: {repo_id}")
+        try:
+            subprocess.run(
+                ["sudo", "dnf", "config-manager", "--set-enabled", repo_id],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            print(f"    Failed to enable {repo_id}")
+        except Exception as e:
+            print(f"    Error enabling {repo_id}: {e}")
+
+    else:
+        print(f"  Unknown repository type: {repo_type}")
+
+
+def install_repos():
+    if DISTRO != "fedora":
+        print("Repository installation only supported on Fedora")
+        return
+
+    repos = read_config(REPOS_CONFIG)
+
+    if not repos:
+        print("No repositories to install")
+        return
+
+    print("Installing repositories...")
+
+    for repo in repos:
+        install_repo(repo)
+
+
+def configure_services():
+    services = read_config(SERVICES_CONFIG)
+
+    # Check if there are any services to configure
+    if not services:
+        print("[INFO]: No services to configure")
+        return
+
+    print("[INFO]: Configuring services...")
+
+    for service_line in services:
+        # Parse the service configuration
+        # Format: SERVICE_NAME:TYPE:STATE
+        # Example: "docker.service:system:enabled"
+
+        # Split by colon - in bash this is: IFS=: read -r service_name service_type service_state
+        parts = service_line.split(":")
+
+        # Make sure we have exactly 3 parts (name, type, state)
+        if len(parts) != 3:
+            print(f"  Skipping invalid service line: {service_line}")
+            continue
+
+        service_name = parts[0].strip()
+        service_type = parts[1].strip()
+        service_state = parts[2].strip()
+
+        if not service_name:
+            continue
+
+        print(f"  {service_name} ({service_type}): {service_state}")
+
+        if service_type == "system":
+            if service_state == "enabled":
+                try:
+                    subprocess.run(
+                        ["sudo", "systemctl", "enable", service_name],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print(f"    Failed to enable {service_name}")
+
+                try:
+                    subprocess.run(
+                        ["sudo", "systemctl", "start", service_name],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print(f"    Failed to start {service_name}")
+
+            elif service_state == "disabled":
+                try:
+                    subprocess.run(
+                        ["sudo", "systemctl", "disable", service_name],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print(f"[ERROR]: Failed to disable {service_name}")
+
+                try:
+                    subprocess.run(
+                        ["sudo", "systemctl", "stop", service_name],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                except Exception:
+                    pass
+
+        elif service_type == "user":
+            if service_state == "enabled":
+                try:
+                    subprocess.run(
+                        ["systemctl", "--user", "enable", service_name],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print(f"    Failed to enable {service_name}")
+
+                try:
+                    subprocess.run(
+                        ["systemctl", "--user", "start", service_name],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print(f"[ERROR]: Failed to start {service_name}")
+
+            elif service_state == "disabled":
+                try:
+                    subprocess.run(
+                        ["systemctl", "--user", "disable", service_name],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print(f"[ERROR]: Failed to disable {service_name}")
+
+                try:
+                    subprocess.run(
+                        ["systemctl", "--user", "stop", service_name],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                except Exception:
+                    pass
+
+        else:
+            print(f"[ERROR]: Unknown service type: {service_type}")
+
+
+def configure_firewall():
+    rules = read_config(FIREWALL_CONFIG)
+
+    if not rules:
+        print("[INFO]: No firewall rules to configure")
+        return
+
+    print("[INFO]: Configuring firewall...")
+
+    if shutil.which("firewall-cmd") is not None:
+        for rule_line in rules:
+            parts = rule_line.split(":", 1)
+            if len(parts) != 2:
+                continue
+
+            rule_type, rule_value = parts[0].strip(), parts[1].strip()
+
+            if not rule_type:
+                continue
+
+            if rule_type == "zone":
+                print(f"[INFO]: Setting default zone: {rule_value}")
+                try:
+                    subprocess.run(
+                        ["sudo", "firewall-cmd", "--set-default-zone=" + rule_value],
+                        capture_output=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print("[ERROR]: Failed")
+
+            elif rule_type == "service":
+                print(f"[INFO]: Adding service: {rule_value}")
+                try:
+                    subprocess.run(
+                        [
+                            "sudo",
+                            "firewall-cmd",
+                            "--permanent",
+                            "--add-service=" + rule_value,
+                        ],
+                        capture_output=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print("[ERROR]: Failed")
+
+            elif rule_type == "port":
+                print(f"[INFO]: Adding port: {rule_value}")
+                try:
+                    subprocess.run(
+                        [
+                            "sudo",
+                            "firewall-cmd",
+                            "--permanent",
+                            "--add-port=" + rule_value,
+                        ],
+                        capture_output=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print("    Failed")
+
+        try:
+            subprocess.run(
+                ["sudo", "firewall-cmd", "--reload"], capture_output=True, check=True
+            )
+        except subprocess.CalledProcessError:
+            print("[ERROR]: Failed to reload firewall")
+
+    elif shutil.which("ufw") is not None:
+        try:
+            subprocess.run(
+                ["sudo", "ufw", "--force", "enable"], capture_output=True, check=False
+            )
+        except Exception:
+            pass
+
+        for rule_line in rules:
+            parts = rule_line.split(":", 1)
+            if len(parts) != 2:
+                continue
+
+            rule_type, rule_value = parts[0].strip(), parts[1].strip()
+
+            if not rule_type:
+                continue
+
+            if rule_type == "allow":
+                print(f"[INFO]: Allowing: {rule_value}")
+                try:
+                    subprocess.run(
+                        ["sudo", "ufw", "allow", rule_value],
+                        capture_output=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print("[ERROR]: Failed")
+
+            elif rule_type == "deny":
+                print(f"[INFO]: Denying: {rule_value}")
+                try:
+                    subprocess.run(
+                        ["sudo", "ufw", "deny", rule_value],
+                        capture_output=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print("[ERROR]: Failed")
+
+            elif rule_type == "rule":
+                print(f"[INFO]: Adding rule: {rule_value}")
+                try:
+                    subprocess.run(
+                        ["sudo", "ufw"] + rule_value.split(),
+                        capture_output=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print("[ERROR]: Failed")
+    else:
+        print("[ERROR]: No supported firewall found")
+
+
+def install_python_packages():
+    packages = read_config(PYTHON_CONFIG)
+
+    if not packages:
+        print("[INFO]: No Python packages to install")
+        return
+
+    if shutil.which("pip3") is None and shutil.which("pip") is None:
+        print("[ERROR]: pip not found. Skipping Python packages")
+        return
+
+    print("Installing Python packages...")
+    pip_cmd = "pip3" if shutil.which("pip3") else "pip"
+
+    for pkg in packages:
+        print(f"[INFO]: Installing: {pkg}")
+        try:
+            subprocess.run(
+                [pip_cmd, "install", "--user", pkg], capture_output=True, check=True
+            )
+        except subprocess.CalledProcessError:
+            print(f"[ERROR]: Failed to install {pkg}")
+
+
+def install_node_packages():
+    packages = read_config(NODE_CONFIG)
+
+    if not packages:
+        print("[INFO]: No Node packages to install")
+        return
+
+    if shutil.which("npm") is None:
+        print("[ERROR]: npm not found. Skipping Node packages")
+        return
+
+    print("[INFO]: Installing Node packages...")
+    for pkg in packages:
+        print(f"[INFO]: Installing: {pkg}")
+        try:
+            subprocess.run(
+                ["npm", "install", "-g", pkg], capture_output=True, check=True
+            )
+        except subprocess.CalledProcessError:
+            print(f"[ERROR]: Failed to install {pkg}")
+
+
+def install_cargo_packages():
+    packages = read_config(CARGO_CONFIG)
+
+    if not packages:
+        print("[INFO]: No Cargo packages to install")
+        return
+
+    if shutil.which("cargo") is None:
+        print("[ERROR]: cargo not found. Skipping Cargo packages")
+        return
+
+    print("[INFO]: Installing Cargo packages...")
+    for pkg in packages:
+        print(f"[INFO]: Installing: {pkg}")
+        try:
+            subprocess.run(["cargo", "install", pkg], capture_output=True, check=True)
+        except subprocess.CalledProcessError:
+            print(f"[ERROR]: Failed to install {pkg}")
+
+
+def configure_groups():
+    groups = read_config(GROUPS_CONFIG)
+
+    if not groups:
+        print("[INFO]: No groups to configure")
+        return
+
+    print("[INFO]: Configuring user groups...")
+    current_user = os.environ.get("USER", os.getlogin())
+
+    for group in groups:
+        if not group:
+            continue
+
+        try:
+            subprocess.run(["getent", "group", group], capture_output=True, check=True)
+        except subprocess.CalledProcessError:
+            print(f"[ERROR]: Group does not exist: {group} (skipping)")
+            continue
+
+        try:
+            result = subprocess.run(
+                ["groups", current_user], capture_output=True, text=True, check=True
+            )
+            user_groups = result.stdout.strip().split()
+
+            if group in user_groups:
+                print(f"[INFO]: Already in group: {group}")
+            else:
+                print(f"[INFO]: Adding to group: {group}")
+                try:
+                    subprocess.run(
+                        ["sudo", "usermod", "-aG", group, current_user],
+                        capture_output=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print(f"[ERROR]: Failed to add to {group}")
+        except Exception:
+            print(f"[ERROR]: Could not check group membership for {group}")
+
+
+def setup_containers():
+    containers = read_config(CONTAINERS_CONFIG)
+
+    if not containers:
+        print("[INFO]: No containers to setup")
+        return
+
+    print("[INFO]: Setting up containers...")
+    for container_line in containers:
+        parts = container_line.split(":", 2)
+        if len(parts) < 2:
+            continue
+
+        container_type = parts[0].strip()
+        identifier = parts[1].strip()
+        rest = parts[2].strip() if len(parts) > 2 else ""
+
+        if not container_type:
+            continue
+
+        if container_type == "docker-image":
+            if shutil.which("docker") is not None:
+                tag = rest if rest else "latest"
+                print(f"[INFO]: Pulling Docker image: {identifier}:{tag}")
+                try:
+                    subprocess.run(
+                        ["docker", "pull", f"{identifier}:{tag}"],
+                        capture_output=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print(f"[ERROR]: Failed to pull {identifier}:{tag}")
+
+        elif container_type == "podman-image":
+            if shutil.which("podman") is not None:
+                tag = rest if rest else "latest"
+                print(f"[INFO]: Pulling Podman image: {identifier}:{tag}")
+                try:
+                    subprocess.run(
+                        ["podman", "pull", f"{identifier}:{tag}"],
+                        capture_output=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    print(f"[ERROR]: Failed to pull {identifier}:{tag}")
+
+        elif container_type in ["docker-run", "podman-run"]:
+            print(f"[INFO]: Container run config saved: {identifier}")
+            print(" [INFO]: (Manual setup required for running containers)")
+
+
+def run_custom_commands():
+    if not CUSTOM_COMMANDS_CONFIG.exists():
+        print("[INFO]: No custom commands configuration found")
+        return
+
+    try:
+        with open(CUSTOM_COMMANDS_CONFIG, "r") as f:
+            content = f.read()
+            lines = [
+                line.strip()
+                for line in content.split("\n")
+                if line.strip() and not line.strip().startswith("#")
+            ]
+
+            if not lines:
+                print("[INFO]: No custom commands to execute")
+                return
+    except Exception:
+        print("[ERROR]: Could not read custom commands file")
+        return
+
+    print("[INFO]: Executing custom commands...")
+    try:
+        subprocess.run(["bash", str(CUSTOM_COMMANDS_CONFIG)], check=True)
+        print("[INFO]: Custom commands completed successfully")
+    except subprocess.CalledProcessError:
+        print("[WARNING]: Some custom commands failed", file=sys.stderr)
+
+
+def system_update():
+    print("[INFO]: Updating system packages...")
+
+    try:
+        match PKG_MANAGER:
+            case "dnf":
+                subprocess.run(
+                    ["sudo", "dnf", "upgrade", "-y", "--refresh"], check=True
+                )
+
+            case "apt":
+                subprocess.run(["sudo", "apt", "update"], check=True)
+                subprocess.run(["sudo", "apt", "upgrade", "-y"], check=True)
+
+            case _:
+                print("[ERROR]: Unsupported package manager for updates")
+                return False
+
+        print("[INFO]: System update complete")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR]: Error during system update: {e}", file=sys.stderr)
+        return False
+
+
+def interactive_package_select(config_file, list_function, title, installed_only=True):
+    """Interactive package selection with detailed preview panel
+
+    Args:
+        config_file: Configuration file to add packages to
+        list_function: Function that returns list of packages
+        title: Title for the selection prompt
+        installed_only: If True, only show installed packages (fast)
+                       If False, show all available packages (slower)
+
+    For system packages:
+    - List installed: Uses direct SQLite query (fastest)
+    - List available: Uses dnf list/apt-cache (slower, queries repos)
+    - Details: Smart detection - uses rpm/dpkg for installed, dnf/apt for available
+    """
+    if shutil.which("fzf") is None:
+        print("fzf is not installed. Please install it first.")
+        return False
+
+    print("Loading packages...", file=sys.stderr)
+
+    import time
+
+    start_time = time.time()
+
+    try:
+        # Call the function to get the list
+        all_items = list_function()
+
+        elapsed = time.time() - start_time
+        print(f"Loaded {len(all_items)} items in {elapsed:.3f}s", file=sys.stderr)
+
+    except Exception as e:
+        print(f"Error getting item list: {e}", file=sys.stderr)
+        return False
+
+    current_items = read_config(config_file)
+    current_items_set = set(current_items)
+
+    filtered_items = [item for item in all_items if item not in current_items_set]
+
+    item_count = len(filtered_items)
+
+    if item_count == 0:
+        print(
+            "No new items to add (all items already in config or none found)",
+            file=sys.stderr,
+        )
+        return True
+
+    print(f"Found {item_count} new items", file=sys.stderr)
+
+    filtered_text = "\n".join(filtered_items)
+
+    # Determine if we should show package details
+    # Only show details for system packages, not for flatpaks, extensions, etc.
+    show_details = config_file == PACKAGES_CONFIG
+
+    try:
+        if show_details and PKG_MANAGER in ["dnf", "apt"]:
+            # Create a wrapper script that intelligently queries package info
+            # Tries installed packages first (fast), then repositories if needed
+            if PKG_MANAGER == "dnf":
+                if installed_only:
+                    preview_cmd = (
+                        "rpm -qi {} 2>/dev/null || echo 'Package info not available'"
+                    )
+                else:
+                    # Try installed first, then repo
+                    preview_cmd = "rpm -qi {} 2>/dev/null || dnf info --quiet --cacheonly {} 2>/dev/null || dnf info --quiet {} 2>/dev/null || echo 'Package info not available'"
+            elif PKG_MANAGER == "apt":
+                if installed_only:
+                    preview_cmd = (
+                        "dpkg -s {} 2>/dev/null || echo 'Package info not available'"
+                    )
+                else:
+                    # Try installed first, then repo
+                    preview_cmd = "dpkg -s {} 2>/dev/null || apt-cache show {} 2>/dev/null || echo 'Package info not available'"
+
+            result = subprocess.run(
+                [
+                    "fzf",
+                    "--multi",
+                    f"--prompt={title} > ",
+                    f"--preview={preview_cmd}",
+                    "--preview-window=right:60%:wrap",
+                    "--bind=tab:toggle+down",
+                    "--bind=ctrl-/:toggle-preview",
+                    "--header=TAB: select | ENTER: confirm | CTRL-/: toggle preview | ↑↓: navigate",
+                    "--height=100%",
+                    "--border=rounded",
+                    "--info=inline",
+                ],
+                input=filtered_text,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        else:
+            # Original simple preview for non-package items
+            result = subprocess.run(
+                [
+                    "fzf",
+                    "--multi",
+                    f"--prompt={title} > ",
+                    "--preview=echo {}",
+                    "--preview-window=up:1",
+                    "--bind=tab:toggle+down",
+                    "--header=TAB to select, ENTER to confirm",
+                ],
+                input=filtered_text,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+        selected = result.stdout.strip()
+
+        if selected:
+            with open(config_file, "a") as f:
+                f.write(selected + "\n")
+
+            selected_count = len(selected.split("\n"))
+            print(f"Added {selected_count} item(s) to configuration")
+
+        return True
+
+    except subprocess.CalledProcessError:
+        return False
+    except Exception as e:
+        print(f"Error during selection: {e}", file=sys.stderr)
+        return False
+
+
+def interactive_remove_from_config(config_file, title):
+    if shutil.which("fzf") is None:
+        print("fzf is not installed. Please install it first.")
+        return False
+
+    current_items = read_config(config_file)
+
+    if not current_items:
+        print("No items in configuration")
+        return
+
+    items_text = "\n".join(current_items)
+
+    try:
+        result = subprocess.run(
+            [
+                "fzf",
+                "--multi",
+                f"--prompt={title} (Remove) > ",
+                "--bind=tab:toggle+down",
+                "--header=TAB to select, ENTER to confirm removal",
+            ],
+            input=items_text,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        selected = result.stdout.strip()
+
+        if selected:
+            selected_items = set(selected.split("\n"))
+
+            with open(config_file, "r") as f:
+                all_lines = f.readlines()
+
+            with open(config_file, "w") as f:
+                for line in all_lines:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
+                        if stripped not in selected_items:
+                            f.write(line)
+                    else:
+                        f.write(line)
+
+            removed_count = len(selected_items)
+            print(f"Removed {removed_count} item(s) from configuration")
+
+        return True
+
+    except subprocess.CalledProcessError:
+        return False
+    except Exception as e:
+        print(f"Error during removal: {e}", file=sys.stderr)
+        return False
+
+
+def list_available_packages():
+    """List all available packages from repositories (not just installed)"""
+    try:
+        if PKG_MANAGER == "dnf":
+            print("[INFO]: Loading available packages from repositories...")
+
+            result = subprocess.Popen(
+                ["dnf", "list", "--available", "-y"],
+                stdout=subprocess.PIPE,
+                stderr=sys.stderr,  # Show dnf's progress to user
+                text=True,
+            )
+
+            stdout, _ = result.communicate()
+
+            if result.returncode == 0:
+                print("\n[INFO]: Processing package list...")
+                packages = []
+                lines = stdout.strip().split("\n")
+
+                for line in lines:
+                    # Format: "package-name.arch version repo"
+                    parts = line.split()
+                    if parts and not line.startswith("Available") and "." in parts[0]:
+                        pkg_name = parts[0].rsplit(".", 1)[0]  # Remove .arch
+                        packages.append(pkg_name)
+
+                unique_packages = sorted(set(packages))
+                print(f"[INFO]: Found {len(unique_packages)} unique packages\n")
+                return unique_packages
+
+        elif PKG_MANAGER == "apt":
+            print("[INFO]: Loading available packages from repositories...")
+            print("[INFO]: This may take a moment...\n")
+
+            result = subprocess.Popen(
+                ["apt-cache", "pkgnames", "-y"],
+                stdout=subprocess.PIPE,
+                stderr=sys.stderr,
+                text=True,
+            )
+
+            if result.returncode == 0:
+                packages = result.stdout.strip().split("\n")
+                unique_packages = sorted(set(pkg for pkg in packages if pkg))
+                print(f"[INFO]: Found {len(unique_packages)} unique packages\n")
+                return unique_packages
+
+        return []
+    except Exception as e:
+        print(f"[ERROR]: Error listing available packages: {e}", file=sys.stderr)
+        return []
+
+
+def search_install_and_add(config_file, list_function, title, pkg_manager_install_func):
+    """Search, install, and add packages to config in one go
+
+    Args:
+        config_file: Configuration file to add packages to
+        list_function: Function that returns list of available packages
+        title: Title for the selection prompt
+        pkg_manager_install_func: Function to install the packages
+    """
+    if shutil.which("fzf") is None:
+        print("fzf is not installed. Please install it first.")
+        return False
+
+    print("Loading available packages...", file=sys.stderr)
+
+    try:
+        all_items = (
+            list_available_packages()
+            if config_file == PACKAGES_CONFIG
+            else list_function()
+        )
+        print(f"Loaded {len(all_items)} packages", file=sys.stderr)
+    except Exception as e:
+        print(f"Error getting package list: {e}", file=sys.stderr)
+        return False
+
+    current_items = read_config(config_file)
+    current_items_set = set(current_items)
+    filtered_items = [item for item in all_items if item not in current_items_set]
+
+    print(f"Filtering out already configured packages...", file=sys.stderr)
+    print(
+        f"Available for installation: {len(filtered_items)} packages", file=sys.stderr
+    )
+
+    if len(filtered_items) == 0:
+        print("No new packages available", file=sys.stderr)
+        return True
+
+    items_text = "\n".join(filtered_items)
+
+    # Show package details for system packages
+    show_details = config_file == PACKAGES_CONFIG
+
+    try:
+        if show_details and PKG_MANAGER in ["dnf", "apt"]:
+            if PKG_MANAGER == "dnf":
+                preview_cmd = "rpm -qi {} 2>/dev/null || dnf info --quiet --cacheonly {} 2>/dev/null || dnf info --quiet {} 2>/dev/null || echo 'Package info not available'"
+            elif PKG_MANAGER == "apt":
+                preview_cmd = "dpkg -s {} 2>/dev/null || apt-cache show {} 2>/dev/null || echo 'Package info not available'"
+
+            result = subprocess.run(
+                [
+                    "fzf",
+                    "--multi",
+                    f"--prompt={title} > ",
+                    f"--preview={preview_cmd}",
+                    "--preview-window=right:60%:wrap",
+                    "--bind=tab:toggle+down",
+                    "--bind=ctrl-/:toggle-preview",
+                    "--header=TAB: select | ENTER: install & add to config | CTRL-/: toggle preview",
+                    "--height=100%",
+                    "--border=rounded",
+                    "--info=inline",
+                ],
+                input=items_text,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        else:
+            result = subprocess.run(
+                [
+                    "fzf",
+                    "--multi",
+                    f"--prompt={title} > ",
+                    "--bind=tab:toggle+down",
+                    "--header=TAB to select, ENTER to install and add to config",
+                ],
+                input=items_text,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+        selected = result.stdout.strip()
+
+        if not selected:
+            print("No packages selected")
+            return True
+
+        selected_packages = selected.split("\n")
+        print(f"\n{'=' * 60}")
+        print(f"Installing {len(selected_packages)} package(s)...")
+        print(f"{'=' * 60}\n")
+
+        # Install packages
+        successfully_installed = []
+        failed_packages = []
+
+        for idx, pkg in enumerate(selected_packages, 1):
+            print(f"[{idx}/{len(selected_packages)}] Installing: {pkg}")
+            try:
+                if pkg_manager_install_func(pkg):
+                    successfully_installed.append(pkg)
+                    print(f"  ✓ {pkg} installed successfully\n")
+                else:
+                    failed_packages.append(pkg)
+                    print(f"  ✗ {pkg} failed to install\n")
+            except Exception as e:
+                failed_packages.append(pkg)
+                print(f"  ✗ {pkg} failed: {e}\n")
+
+        # Summary
+        print(f"{'=' * 60}")
+        print(f"Installation Summary:")
+        print(f"  ✓ Successfully installed: {len(successfully_installed)}")
+        print(f"  ✗ Failed: {len(failed_packages)}")
+        print(f"{'=' * 60}\n")
+
+        # Add successfully installed packages to config
+        if successfully_installed:
+            with open(config_file, "a") as f:
+                for pkg in successfully_installed:
+                    f.write(f"{pkg}\n")
+            print(f"✓ Added {len(successfully_installed)} package(s) to configuration")
+
+            if successfully_installed:
+                print("\nSuccessfully installed packages:")
+                for pkg in successfully_installed:
+                    print(f"  • {pkg}")
+
+        if failed_packages:
+            print("\n✗ Failed packages:")
+            for pkg in failed_packages:
+                print(f"  • {pkg}")
+
+        if not successfully_installed:
+            print("\n✗ No packages were successfully installed")
+
+        return True
+
+    except subprocess.CalledProcessError:
+        return False
+    except Exception as e:
+        print(f"Error during selection: {e}", file=sys.stderr)
+        return False
+
+
+def install_single_package(package_name):
+    """Install a single system package with live output"""
+    try:
+        if PKG_MANAGER == "dnf":
+            result = subprocess.run(
+                ["sudo", "dnf", "install", "-y", package_name],
+                check=False,
+            )
+        elif PKG_MANAGER == "apt":
+            result = subprocess.run(
+                ["sudo", "apt", "install", "-y", package_name],
+                check=False,
+            )
+        else:
+            return False
+
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def edit_custom_commands():
+    editor = os.environ.get("EDITOR", "nano")
+
+    if not CUSTOM_COMMANDS_CONFIG.exists():
+        init_config()
+
+    print(f"Opening custom commands in {editor}...")
+    subprocess.run([editor, str(CUSTOM_COMMANDS_CONFIG)])
+
+
+def edit_config_file(config_file):
+    editor = os.environ.get("EDITOR", "nano")
+    config_path = Path(config_file)
+
+    if not config_path.exists():
+        init_config()
+
+    print(f"Opening {config_path.name} in {editor}...")
+    subprocess.run([editor, str(config_path)])
+
+
+def install_packages():
+    packages = read_config(PACKAGES_CONFIG)
+
+    if not packages:
+        print("No packages to install")
+        return
+
+    print("Installing system packages...")
+
+    try:
+        match PKG_MANAGER:
+            case "dnf":
+                subprocess.run(
+                    ["sudo", "dnf", "install", "-y", "--skip-broken"] + packages,
+                    check=True,
+                )
+
+            case "apt":
+                subprocess.run(["sudo", "apt", "install", "-y"] + packages, check=True)
+
+            case _:
+                print("Unsupported package manager")
+                return False
+
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error installing packages: {e}", file=sys.stderr)
+        return False
+
+
+def install_flatpaks():
+    flatpaks = read_config(FLATPAKS_CONFIG)
+
+    if not flatpaks:
+        print("No flatpaks to install")
+        return
+
+    if shutil.which("flatpak") is None:
+        print("flatpak not found. Skipping Flatpak installation")
+        return
+
+    print("Installing flatpaks...")
+
+    try:
+        result = subprocess.run(
+            ["flatpak", "install", "-y", "flathub"] + flatpaks,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        if result.returncode != 0:
+            print("Some flatpaks may have failed to install")
+
+    except Exception as e:
+        print(f"Error installing flatpaks: {e}", file=sys.stderr)
+
+
+def install_extensions():
+    extensions = read_config(EXTENSIONS_CONFIG)
+
+    if not extensions:
+        print("No extensions to install")
+        return
+
+    if shutil.which("gnome-extensions") is None:
+        print("GNOME extensions manager not found")
+        return False
+
+    print("Installing GNOME extensions...")
+    print("Note: Manual installation via extensions.gnome.org may be required")
+
+    for ext in extensions:
+        print(f"  - {ext}")
+
+
+def backup_dconf():
+    print("Backing up dconf settings...")
+
+    try:
+        result = subprocess.run(
+            ["dconf", "dump", "/"], capture_output=True, text=True, check=True
+        )
+
+        with open(DCONF_BACKUP, "w") as f:
+            f.write(result.stdout)
+
+        print(f"dconf settings backed up to {DCONF_BACKUP}")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error backing up dconf: {e}", file=sys.stderr)
+        return False
+
+
+def restore_dconf():
+    if not DCONF_BACKUP.exists():
+        print(f"No dconf backup found at {DCONF_BACKUP}")
+        return False
+
+    print("Restoring dconf settings...")
+
+    try:
+        with open(DCONF_BACKUP, "r") as f:
+            backup_content = f.read()
+
+        subprocess.run(
+            ["dconf", "load", "/"], input=backup_content, text=True, check=True
+        )
+
+        print("dconf settings restored")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error restoring dconf: {e}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"Error reading backup file: {e}", file=sys.stderr)
+        return False
+
+
+def sync_config():
+    print("Synchronizing current system state to configuration...")
+
+    def write_config_with_header(config_file, items, section_name):
+        with open(config_file, "w") as f:
+            f.write(f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"# {section_name}\n")
+            f.write("\n")
+            for item in items:
+                f.write(f"{item}\n")
+
+    print("Updating packages configuration...")
+    packages = list_installed_packages()
+    write_config_with_header(PACKAGES_CONFIG, packages, "System packages")
+
+    print("Updating flatpaks configuration...")
+    flatpaks = list_installed_flatpaks()
+    if flatpaks:
+        write_config_with_header(FLATPAKS_CONFIG, flatpaks, "Flatpak applications")
+
+    print("Updating extensions configuration...")
+    extensions = list_installed_extensions()
+    if extensions:
+        write_config_with_header(EXTENSIONS_CONFIG, extensions, "GNOME extensions")
+
+    if DISTRO == "fedora":
+        backup_repos()
+
+    print("Updating services configuration...")
+    services = list_enabled_services()
+    if services:
+        write_config_with_header(SERVICES_CONFIG, services, "Systemd services")
+
+    backup_firewall()
+
+    print("Updating Python packages configuration...")
+    python_packages = list_python_packages()
+    if python_packages:
+        write_config_with_header(PYTHON_CONFIG, python_packages, "Python packages")
+
+    print("Updating Node packages configuration...")
+    node_packages = list_node_packages()
+    if node_packages:
+        write_config_with_header(NODE_CONFIG, node_packages, "Node packages")
+
+    print("Updating Cargo packages configuration...")
+    cargo_packages = list_cargo_packages()
+    if cargo_packages:
+        write_config_with_header(CARGO_CONFIG, cargo_packages, "Cargo packages")
+
+    print("Updating groups configuration...")
+    groups = list_user_groups()
+    if groups:
+        write_config_with_header(GROUPS_CONFIG, groups, "User groups")
+
+    backup_dconf()
+
+    print("Configuration synchronized")
+
+
+def restore_system():
+    print("=========================================")
+    print("Starting Full System Restoration")
+    print("=========================================")
+    print()
+
+    print("[1/14] System Update & Upgrade")
+    print("---------------------------------")
+    system_update()
+    print()
+
+    print("[2/14] Custom Commands")
+    print("---------------------------------")
+    run_custom_commands()
+    print()
+
+    print("[3/14] Installing System Packages")
+    print("---------------------------------")
+    install_packages()
+    print()
+
+    print("[4/14] Installing Flatpaks")
+    print("---------------------------------")
+    install_flatpaks()
+    print()
+
+    print("[5/14] Installing Cargo Packages")
+    print("---------------------------------")
+    install_cargo_packages()
+    print()
+
+    print("[6/14] Installing Node Packages")
+    print("---------------------------------")
+    install_node_packages()
+    print()
+
+    print("[7/14] Installing Python Packages")
+    print("---------------------------------")
+    install_python_packages()
+    print()
+
+    if DISTRO == "fedora":
+        print("[8/14] Adding Repositories")
+        print("---------------------------------")
+        install_repos()
+        print()
+    else:
+        print("[8/14] Repositories (Skipped - Not Fedora)")
+        print("---------------------------------")
+        print()
+
+    if "gnome" in DESKTOP:
+        print("[9/14] Installing GNOME Extensions")
+        print("---------------------------------")
+        install_extensions()
+        print()
+    else:
+        print("[9/14] GNOME Extensions (Skipped - Not GNOME Desktop)")
+        print("---------------------------------")
+        print()
+
+    print("[10/14] Configuring Services")
+    print("---------------------------------")
+    configure_services()
+    print()
+
+    print("[11/14] Configuring Firewall")
+    print("---------------------------------")
+    configure_firewall()
+    print()
+
+    print("[12/14] Configuring User Groups")
+    print("---------------------------------")
+    configure_groups()
+    print()
+
+    print("[13/14] Setting up Containers")
+    print("---------------------------------")
+    setup_containers()
+    print()
+
+    print("[14/14] Restoring dconf Settings")
+    print("---------------------------------")
+    restore_dconf()
+    print()
+
+    print("=========================================")
+    print("System Restoration Complete!")
+    print("=========================================")
+    print()
+    print("IMPORTANT: You may need to:")
+    print("  - Log out and log back in for group changes to take effect")
+    print("  - Manually install GNOME extensions from extensions.gnome.org")
+    print("  - Reboot the system if kernel or driver updates were installed")
+    print("  - Start Docker/Podman services: sudo systemctl start docker")
+    print("  - Configure running containers manually (check containers.conf)")
+
+
+def show_status():
+    """Display current configuration status"""
+    print("System Configuration Status")
+    print("============================")
+    print(f"Config directory: {CONFIG_DIR}")
+    print(f"Distribution: {DISTRO}")
+    print(f"Package manager: {PKG_MANAGER}")
+    print(f"Desktop environment: {DESKTOP}")
+    print()
+
+    print("Configuration Files:")
+    print(f"  Packages: {len(read_config(PACKAGES_CONFIG))}")
+    print(f"  Flatpaks: {len(read_config(FLATPAKS_CONFIG))}")
+    print(f"  Extensions: {len(read_config(EXTENSIONS_CONFIG))}")
+    if DISTRO == "fedora":
+        print(f"  Repositories: {len(read_config(REPOS_CONFIG))}")
+    print(f"  Services: {len(read_config(SERVICES_CONFIG))}")
+    print(f"  Firewall rules: {len(read_config(FIREWALL_CONFIG))}")
+    print(f"  Python packages: {len(read_config(PYTHON_CONFIG))}")
+    print(f"  Node packages: {len(read_config(NODE_CONFIG))}")
+    print(f"  Cargo packages: {len(read_config(CARGO_CONFIG))}")
+    print(f"  User groups: {len(read_config(GROUPS_CONFIG))}")
+    print(f"  Containers: {len(read_config(CONTAINERS_CONFIG))}")
+    print()
+    print("Backups:")
+    print(f"  Custom commands: {'Yes' if CUSTOM_COMMANDS_CONFIG.exists() else 'No'}")
+    print(f"  dconf backup: {'Yes' if DCONF_BACKUP.exists() else 'No'}")
+
+
+def interactive_menu():
+    if shutil.which("fzf") is None:
+        print("fzf is not installed. Please install it first.")
+        return False
+
+    menu_items = [
+        "Initialize configuration",
+        "Add packages to config",
+        "Add flatpaks to config",
+        "Add GNOME extensions to config",
+        "Add repositories to config (Fedora)",
+        "Add services to config",
+        "Add Python packages to config",
+        "Add Node packages to config",
+        "Add Cargo packages to config",
+        "Add user groups to config",
+        "Search, install and add packages to config",
+        "Edit custom commands",
+        "Edit services config",
+        "Edit firewall config",
+        "Edit containers config",
+        "Remove packages from config",
+        "Remove flatpaks from config",
+        "Remove GNOME extensions from config",
+        "Remove repositories from config (Fedora)",
+        "Remove services from config",
+        "Remove Python packages from config",
+        "Remove Node packages from config",
+        "Remove Cargo packages from config",
+        "Remove user groups from config",
+        "Sync current system to config",
+        "Backup dconf settings",
+        "Backup firewall rules",
+        "System update & upgrade",
+        "Restore entire system (Full)",
+        "Install packages",
+        "Install flatpaks",
+        "Install GNOME extensions",
+        "Install repositories (Fedora)",
+        "Install Python packages",
+        "Install Node packages",
+        "Install Cargo packages",
+        "Configure services",
+        "Configure firewall",
+        "Configure user groups",
+        "Setup containers",
+        "Run custom commands",
+        "Restore dconf settings",
+        "Show status",
+        "Exit",
+    ]
+
+    if DISTRO != "fedora":
+        menu_items = [item for item in menu_items if "(Fedora)" not in item]
+
+    menu_text = "\n".join(menu_items)
+
+    try:
+        result = subprocess.run(
+            ["fzf", "--prompt=Select action > ", "--height=40%", "--reverse"],
+            input=menu_text,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        choice = result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return False
+
+    match choice:
+        case "Initialize configuration":
+            init_config()
+        case "Add packages to config":
+            interactive_package_select(
+                PACKAGES_CONFIG, list_installed_packages, "Select packages to add"
+            )
+        case "Add flatpaks to config":
+            interactive_package_select(
+                FLATPAKS_CONFIG, list_installed_flatpaks, "Select flatpaks to add"
+            )
+        case "Add GNOME extensions to config":
+            interactive_package_select(
+                EXTENSIONS_CONFIG, list_installed_extensions, "Select extensions to add"
+            )
+        case "Add repositories to config (Fedora)":
+            interactive_package_select(
+                REPOS_CONFIG, list_enabled_repos, "Select repositories to add"
+            )
+        case "Add services to config":
+            interactive_package_select(
+                SERVICES_CONFIG, list_enabled_services, "Select services to add"
+            )
+        case "Add Python packages to config":
+            interactive_package_select(
+                PYTHON_CONFIG, list_python_packages, "Select Python packages to add"
+            )
+        case "Add Node packages to config":
+            interactive_package_select(
+                NODE_CONFIG, list_node_packages, "Select Node packages to add"
+            )
+        case "Add Cargo packages to config":
+            interactive_package_select(
+                CARGO_CONFIG, list_cargo_packages, "Select Cargo packages to add"
+            )
+        case "Add user groups to config":
+            interactive_package_select(
+                GROUPS_CONFIG, list_user_groups, "Select groups to add"
+            )
+        case "Search, install and add packages to config":
+            search_install_and_add(
+                PACKAGES_CONFIG,
+                list_available_packages,
+                "Search and install packages",
+                install_single_package,
+            )
+        case "Edit custom commands":
+            edit_custom_commands()
+        case "Edit services config":
+            edit_config_file(SERVICES_CONFIG)
+        case "Edit firewall config":
+            edit_config_file(FIREWALL_CONFIG)
+        case "Edit containers config":
+            edit_config_file(CONTAINERS_CONFIG)
+        case "Remove packages from config":
+            interactive_remove_from_config(PACKAGES_CONFIG, "Remove packages")
+        case "Remove flatpaks from config":
+            interactive_remove_from_config(FLATPAKS_CONFIG, "Remove flatpaks")
+        case "Remove GNOME extensions from config":
+            interactive_remove_from_config(EXTENSIONS_CONFIG, "Remove extensions")
+        case "Remove repositories from config (Fedora)":
+            interactive_remove_from_config(REPOS_CONFIG, "Remove repositories")
+        case "Remove services from config":
+            interactive_remove_from_config(SERVICES_CONFIG, "Remove services")
+        case "Remove Python packages from config":
+            interactive_remove_from_config(PYTHON_CONFIG, "Remove Python packages")
+        case "Remove Node packages from config":
+            interactive_remove_from_config(NODE_CONFIG, "Remove Node packages")
+        case "Remove Cargo packages from config":
+            interactive_remove_from_config(CARGO_CONFIG, "Remove Cargo packages")
+        case "Remove user groups from config":
+            interactive_remove_from_config(GROUPS_CONFIG, "Remove groups")
+        case "Sync current system to config":
+            sync_config()
+        case "Backup dconf settings":
+            backup_dconf()
+        case "Backup firewall rules":
+            backup_firewall()
+        case "System update & upgrade":
+            system_update()
+        case "Restore entire system (Full)":
+            restore_system()
+        case "Install packages":
+            install_packages()
+        case "Install flatpaks":
+            install_flatpaks()
+        case "Install GNOME extensions":
+            install_extensions()
+        case "Install repositories (Fedora)":
+            install_repos()
+        case "Install Python packages":
+            install_python_packages()
+        case "Install Node packages":
+            install_node_packages()
+        case "Install Cargo packages":
+            install_cargo_packages()
+        case "Configure services":
+            configure_services()
+        case "Configure firewall":
+            configure_firewall()
+        case "Configure user groups":
+            configure_groups()
+        case "Setup containers":
+            setup_containers()
+        case "Run custom commands":
+            run_custom_commands()
+        case "Restore dconf settings":
+            restore_dconf()
+        case "Show status":
+            show_status()
+        case "Exit" | "":
+            sys.exit(0)
+
+
+def show_version():
+    print(f"sysconfig-manager v{VERSION}")
+
+
+def show_help():
+    show_version()
+    print(f"""Manage system configuration declaratively
+
+USAGE:
+    sysconfig-manager [COMMAND]
+
+COMMANDS:
+    init        Initialize configuration directory
+    restore     Restore entire system from config (full restoration)
+    version     Show version information
+    help        Show this help message
+    (no args)   Show interactive fzf menu (recommended)
+
+INTERACTIVE MENU:
+    The main way to use this tool is through the interactive fzf menu.
+    Simply run: sysconfig-manager
+
+    The menu provides all functionality organized into categories:
+      - Initialize and sync configuration
+      - Add items to config (packages, services, etc.)
+      - Remove items from config
+      - Backup and restore operations
+      - Edit configuration files
+      - Install and configure individual components
+
+RESTORE ORDER (Full System Restore):
+    1.  System update & upgrade
+    2.  Execute custom commands
+    3.  Install system packages
+    4.  Install flatpaks
+    5.  Install Cargo packages
+    6.  Install Node packages
+    7.  Install Python packages
+    8.  Add Copr/third-party repositories (Fedora)
+    9.  Install GNOME extensions (if GNOME desktop)
+    10. Configure systemd services
+    11. Configure firewall rules
+    12. Configure user groups
+    13. Setup containers
+    14. Restore dconf settings
+
+CONFIGURATION FILES:
+    Config directory: {CONFIG_DIR}
+
+    Core:
+      packages.conf         System packages (dnf/apt)
+      flatpaks.conf         Flatpak applications
+      gnome-extensions.conf GNOME extensions
+      repos.conf            Repositories (Fedora)
+      custom-commands.sh    Custom setup script
+      dconf-settings.ini    Desktop settings backup
+
+    Services & Security:
+      services.conf         Systemd services
+      firewall.conf         Firewall rules
+      groups.conf           User groups
+
+    Development:
+      python-packages.conf  Python packages (pip)
+      node-packages.conf    Node packages (npm)
+      cargo-packages.conf   Rust packages (cargo)
+      containers.conf       Docker/Podman setup
+
+TYPICAL WORKFLOW:
+    # First time setup on current system
+    sysconfig-manager init
+    sysconfig-manager              # Use interactive menu to sync
+
+    # On a fresh system (restore everything)
+    sysconfig-manager restore
+
+    # Daily usage (interactive menu)
+    sysconfig-manager
+
+CONFIGURATION FORMATS:
+
+    services.conf:
+      docker.service:system:enabled
+      sshd.service:system:enabled
+      bluetooth.service:system:disabled
+
+    firewall.conf (firewalld):
+      service:ssh
+      service:http
+      port:8080/tcp
+
+    firewall.conf (ufw):
+      allow:22/tcp
+      allow:80/tcp
+
+    containers.conf:
+      docker-image:postgres:latest
+      docker-image:redis
+      podman-image:nginx:alpine
+""")
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ["--help", "-h"]:
+        show_help()
+        sys.exit(0)
+
+    command = sys.argv[1] if len(sys.argv) > 1 else "menu"
+
+    match command:
+        case "init":
+            init_config()
+        case "restore":
+            restore_system()
+        case "help" | "-help" | "--help" | "-h":
+            show_help()
+        case "version" | "--version":
+            show_version()
+        case "menu" | "":
+            interactive_menu()
+        case _:
+            print(f"Unknown command: {command}")
+            print()
+            print("Available commands:")
+            print("  sysconfig-manager          - Interactive menu (default)")
+            print("  sysconfig-manager init     - Initialize configuration")
+            print("  sysconfig-manager restore  - Full system restore")
+            print("  sysconfig-manager version  - Show version")
+            print("  sysconfig-manager help     - Show help")
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
