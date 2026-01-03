@@ -1,0 +1,25 @@
+#!/bin/bash
+# Memory limit in kilobytes (3 GiB = 3 * 1024 * 1024 KB) - keeps 2GB free for general tasks
+MEMORY_LIMIT=$((3 * 1024 * 1024))
+# VM limit in kilobytes (5 GiB = 5 * 1024 * 1024 KB)
+VM_LIMIT=$((5 * 1024 * 1024))
+echo "Defending your system against rogue shellchecks..."
+while true; do
+    total_vsize=0
+    ps -eo comm,pid,rss,vsize | while read -r COMM PID RSS VSIZE; do
+        if [[ "$COMM" == "shellcheck" ]]; then
+            total_vsize=$((total_vsize + VSIZE))
+            if [[ "$RSS" -gt $MEMORY_LIMIT ]]; then
+                echo "Process $COMM (PID: $PID) is using $RSS KB of memory, exceeding limit, $MEMORY_LIMIT KB. Killing it."
+                kill -TERM "$PID"
+                total_vsize=$((total_vsize - VSIZE))
+            fi
+            if [[ $total_vsize -gt $VM_LIMIT ]]; then
+                echo "Process $COMM (PID: $PID) contributes to the aggregrate virtual memory size, $total_vsize KB of virtual memory, exceeding limit, $VM_LIMIT KB. Killing it."
+                kill -TERM "$PID"
+                total_vsize=$((total_vsize - VSIZE))
+            fi
+        fi
+    done
+    sleep 2
+done
