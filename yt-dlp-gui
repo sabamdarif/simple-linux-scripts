@@ -1,0 +1,260 @@
+#!/bin/bash
+
+# Application title
+APP_TITLE="yt-dlp GUI"
+ICON_PATH="$HOME/dotfiles/.local/share/yt-dlp.png"
+
+# Check if required tools are installed
+for cmd in yad yt-dlp ffmpeg; do
+    if ! command -v $cmd &>/dev/null; then
+        yad --error --text="$cmd is not installed. Please install it first." --button="OK:0"
+        exit 1
+    fi
+done
+
+# Configuration file
+CONFIG_DIR="$HOME/.config/ytdlp-gui"
+CONFIG_FILE="$CONFIG_DIR/settings.conf"
+mkdir -p "$CONFIG_DIR"
+
+if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+fi
+
+DOWNLOAD_PATH="${DOWNLOAD_PATH:-$HOME/Downloads}"
+DEFAULT_FORMAT="${DEFAULT_FORMAT:-bestvideo+bestaudio/best}"
+DEFAULT_QUALITY="${DEFAULT_QUALITY:-best}"
+
+show_main_gui() {
+    result=$(yad --form --width=700 --height=550 \
+        --title="$APP_TITLE" \
+        --window-icon="$ICON_PATH" \
+        --text="<b>Download videos from YouTube and other platforms</b>" \
+        --separator="|" \
+        --field="URL(s) (one per line):TXT" "" \
+        --field="Download Path:DIR" "$DOWNLOAD_PATH" \
+        --field="Format:CB" "best!bestvideo+bestaudio/best!worstvideo+worstaudio/worst!mp4!webm!flv!mkv!audio-only (best)!mp3!m4a!opus!flac" \
+        --field="Video Quality:CB" "best!2160p!1440p!1080p!720p!480p!360p!240p!144p!worst" \
+        --field="Audio Quality:CB" "best (0)!320k!256k!192k!128k!96k!64k!worst (9)" \
+        --field="Output Template:" "%(title)s.%(ext)s" \
+        --field="Subtitle Language (e.g., en,es):" "" \
+        --field="Embed Subtitles:CHK" "FALSE" \
+        --field="Embed Thumbnail:CHK" "FALSE" \
+        --field="Add Metadata:CHK" "TRUE" \
+        --field="Playlist Options:CB" "Download all!Single video!Start from (number)!End at (number)!Items (e.g., 1,3,5-7)" \
+        --field="Playlist Argument:" "" \
+        --field="Rate Limit (e.g., 1M, 500K):" "" \
+        --field="Cookies from Browser:CB" "none!chrome!firefox!edge!brave!opera!safari" \
+        --field="Proxy (e.g., socks5://127.0.0.1:1080):" "" \
+        --field="Username:" "" \
+        --field="Password:H" "" \
+        --field="Extra Arguments:" "" \
+        --button="Download:0" \
+        --button="Cancel:1")
+
+    ret=$?
+
+    if [ $ret -ne 0 ]; then
+        exit 0
+    fi
+
+    # Parse results
+    IFS='|' read -r urls path format video_qual audio_qual template subs embed_subs \
+        embed_thumb metadata playlist playlist_arg rate_limit cookies proxy user pass extra <<<"$result"
+
+    # Validate URL
+    if [ -z "$urls" ]; then
+        yad --error --text="Please enter at least one URL" --button="OK:0"
+        show_main_gui
+        return
+    fi
+
+    # Save settings
+    echo "DOWNLOAD_PATH=\"$path\"" >"$CONFIG_FILE"
+    echo "DEFAULT_FORMAT=\"$format\"" >>"$CONFIG_FILE"
+
+    # Build yt-dlp command
+    cmd="yt-dlp"
+
+    # Output path
+    if [ ! -z "$path" ]; then
+        cmd="$cmd -P \"$path\""
+    fi
+
+    # Output template
+    if [ ! -z "$template" ]; then
+        cmd="$cmd -o \"$template\""
+    fi
+
+    # Format and Quality selection
+    case "$format" in
+    "audio-only (best)")
+        cmd="$cmd -f bestaudio -x"
+        ;;
+    "mp3" | "m4a" | "opus" | "flac")
+        # Parse audio quality
+        if [[ "$audio_qual" == "best (0)" ]]; then
+            cmd="$cmd -f bestaudio -x --audio-format $format --audio-quality 0"
+        elif [[ "$audio_qual" == "worst (9)" ]]; then
+            cmd="$cmd -f bestaudio -x --audio-format $format --audio-quality 9"
+        elif [[ "$audio_qual" =~ ^[0-9]+k$ ]]; then
+            # Specific bitrate like 320k, 192k
+            cmd="$cmd -f bestaudio -x --audio-format $format --postprocessor-args \"ffmpeg:-b:a $audio_qual\""
+        else
+            cmd="$cmd -f bestaudio -x --audio-format $format --audio-quality 0"
+        fi
+        ;;
+    "best")
+        if [ "$video_qual" != "best" ] && [ "$video_qual" != "worst" ]; then
+            # Select best video with specific height + best audio
+            cmd="$cmd -f \"bv*[height<=${video_qual%p}]+ba/b[height<=${video_qual%p}]\""
+        else
+            cmd="$cmd -f bestvideo+bestaudio/best"
+        fi
+        ;;
+    "bestvideo+bestaudio/best")
+        if [ "$video_qual" != "best" ] && [ "$video_qual" != "worst" ]; then
+            cmd="$cmd -f \"bv*[height<=${video_qual%p}]+ba/b[height<=${video_qual%p}]\""
+        else
+            cmd="$cmd -f bestvideo+bestaudio/best"
+        fi
+        ;;
+    "worstvideo+worstaudio/worst")
+        cmd="$cmd -f worstvideo+worstaudio/worst"
+        ;;
+    "mp4" | "webm" | "flv" | "mkv")
+        if [ "$video_qual" != "best" ] && [ "$video_qual" != "worst" ]; then
+            # Select specific quality and merge to format
+            cmd="$cmd -f \"bv*[height<=${video_qual%p}][ext=$format]+ba[ext=m4a]/bv*[height<=${video_qual%p}]+ba/b[height<=${video_qual%p}][ext=$format]/b[height<=${video_qual%p}]\" --merge-output-format $format"
+        else
+            cmd="$cmd -f \"bv*[ext=$format]+ba[ext=m4a]/bv*+ba/b[ext=$format]/b\" --merge-output-format $format"
+        fi
+        ;;
+    esac
+
+    # Subtitles
+    if [ ! -z "$subs" ]; then
+        cmd="$cmd --sub-langs $subs --write-subs"
+        if [ "$embed_subs" = "TRUE" ]; then
+            cmd="$cmd --embed-subs"
+        fi
+    fi
+
+    # Thumbnail
+    if [ "$embed_thumb" = "TRUE" ]; then
+        cmd="$cmd --embed-thumbnail"
+    fi
+
+    # Metadata
+    if [ "$metadata" = "TRUE" ]; then
+        cmd="$cmd --embed-metadata"
+    fi
+
+    # Playlist options
+    case "$playlist" in
+    "Single video")
+        cmd="$cmd --no-playlist"
+        ;;
+    "Start from (number)")
+        if [ ! -z "$playlist_arg" ]; then
+            cmd="$cmd --playlist-start $playlist_arg"
+        fi
+        ;;
+    "End at (number)")
+        if [ ! -z "$playlist_arg" ]; then
+            cmd="$cmd --playlist-end $playlist_arg"
+        fi
+        ;;
+    "Items (e.g., 1,3,5-7)")
+        if [ ! -z "$playlist_arg" ]; then
+            cmd="$cmd --playlist-items $playlist_arg"
+        fi
+        ;;
+    esac
+
+    # Rate limit
+    if [ ! -z "$rate_limit" ]; then
+        cmd="$cmd --limit-rate $rate_limit"
+    fi
+
+    # Cookies
+    if [ "$cookies" != "none" ]; then
+        cmd="$cmd --cookies-from-browser $cookies"
+    fi
+
+    # Proxy
+    if [ ! -z "$proxy" ]; then
+        cmd="$cmd --proxy \"$proxy\""
+    fi
+
+    # Authentication
+    if [ ! -z "$user" ]; then
+        cmd="$cmd -u \"$user\""
+        if [ ! -z "$pass" ]; then
+            cmd="$cmd -p \"$pass\""
+        fi
+    fi
+
+    # Extra arguments
+    if [ ! -z "$extra" ]; then
+        cmd="$cmd $extra"
+    fi
+
+    # Always add verbose output
+    cmd="$cmd --verbose"
+
+    # Add URLs (handle multiple URLs)
+    while IFS= read -r url; do
+        if [ ! -z "$url" ]; then
+            cmd="$cmd \"$url\""
+        fi
+    done <<<"$urls"
+
+    (
+        echo "Command: $cmd"
+        echo "=========================================="
+        echo ""
+        eval "$cmd" 2>&1
+        download_status=$?
+        echo ""
+        echo "=========================================="
+        if [ "$download_status" -eq 0 ]; then
+            echo "✓ Download completed successfully!"
+        else
+            echo "✗ Download failed with exit code: $download_status"
+            echo ""
+            echo "Common issues:"
+            echo "• Network connection interrupted"
+            echo "• Selected format/quality not available (try 'best' format)"
+            echo "• Video requires authentication"
+            echo "• Insufficient disk space"
+            echo "• Video is geo-restricted"
+        fi
+        exit "$download_status"
+    ) | yad --text-info --width=900 --height=600 \
+        --title="$APP_TITLE - Download Progress" \
+        --window-icon="video" \
+        --tail --button="Cancel:1"
+
+    download_status=${PIPESTATUS[0]}
+
+    if [ "$download_status" -eq 0 ]; then
+        if yad --info --title="$APP_TITLE" \
+            --text="Download completed successfully!" \
+            --button="Open Folder:xdg-open \"$path\"" \
+            --button="New Download:0" \
+            --button="Exit:1"; then
+            show_main_gui
+        fi
+    else
+        if yad --error --title="$APP_TITLE" \
+            --text="Download failed or was cancelled." \
+            --button="Try Again:0" \
+            --button="Exit:1"; then
+            show_main_gui
+        fi
+    fi
+}
+
+show_main_gui
